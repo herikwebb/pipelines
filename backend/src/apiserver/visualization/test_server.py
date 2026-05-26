@@ -95,6 +95,14 @@ class TestServerEndpoints(tornado.testing.AsyncHTTPTestCase):
             body='type=test&source=gs://ml-pipeline/data.csv')
         self.assertEqual(200, response.code)
 
+    def test_source_is_escaped_as_string_literal(self):
+        source = 'gs://bucket/data"; raise Exception("pwned") #'
+        nb = server.VisualizationHandler.generate_notebook_from_arguments(
+            None, {}, source, "test")
+        self.assertEqual(
+            'source = \'gs://bucket/data"; raise Exception("pwned") #\'',
+            nb.cells[1].source)
+
 
 if __name__ == "__main__":
     unittest.main()

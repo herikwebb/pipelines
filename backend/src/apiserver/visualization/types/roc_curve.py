@@ -21,6 +21,7 @@ from bokeh.models import HoverTool
 # gcsfs is required for pandas GCS integration.
 import gcsfs
 import pandas as pd
+from safe_target_lambda import build_safe_target_lambda
 from sklearn.metrics import roc_curve
 from tensorflow.python.lib.io import file_io
 
@@ -49,7 +50,9 @@ if not variables.get("is_generated", False):
 
     df = pd.concat(dfs)
     if variables.get("target_lambda", False):
-        df["target"] = df.apply(eval(variables.get("target_lambda", "")), axis=1)
+        target_lambda = build_safe_target_lambda(
+            variables.get("target_lambda", ""))
+        df["target"] = df.apply(target_lambda, axis=1)
     else:
         df["target"] = df["target"].apply(lambda x: 1 if x == variables.get("trueclass", "true") else 0)
     fpr, tpr, thresholds = roc_curve(df["target"], df[variables.get("true_score_column", "true")])

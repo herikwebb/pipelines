@@ -105,7 +105,7 @@ class VisualizationHandler(tornado.web.RequestHandler):
         """
         nb = new_notebook()
         nb.cells.append(exporter.create_cell_from_args(arguments))
-        nb.cells.append(new_code_cell('source = "{}"'.format(source)))
+        nb.cells.append(new_code_cell("source = {}".format(repr(source))))
         if visualization_type == "custom":
             code = arguments.get("code", [])
             nb.cells.append(exporter.create_cell_from_custom_code(code))
