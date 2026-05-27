@@ -500,6 +500,18 @@ describe('/artifacts', () => {
       });
     });
 
+    it('rejects http artifacts that normalize to link-local IP addresses', async () => {
+      const configs = loadConfigs(argv, {});
+      app = new UIServer(configs);
+
+      const fetchCallCount = mockedFetch.mock.calls.length;
+      const request = requests(app.app);
+      await request
+        .get('/artifacts/get?source=http&bucket=2852039166&key=latest%2Fmeta-data')
+        .expect(500, 'Domain not allowed.');
+      expect(mockedFetch).toHaveBeenCalledTimes(fetchCallCount);
+    });
+
     it('responds with partial http artifact if peek=5 flag is set', async () => {
       const artifactContent = 'hello world';
       const mockedFetch: Mock = fetch as any;
