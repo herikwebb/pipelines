@@ -678,3 +678,34 @@ docformatter --check --recursive sdk/python/ --exclude "compiler_test.py"
 - API client generation fails with Docker errors (for example permission denied to Docker socket): ensure Docker is running and your user can access the Docker daemon.
 - Frontend fails to start due to Node version mismatch: `nvm use $(cat frontend/.nvmrc)` or `fnm use`.
 - Runtime component imports SDK-only modules: `_KFP_RUNTIME=true` disables many SDK imports; avoid importing SDK-only modules in task code.
+
+## Cursor Cloud specific instructions
+
+### Environment overview
+
+The VM update script handles dependency installation for all three main components (Python SDK, Go backend, frontend). After it runs, the environment is ready for development.
+
+### Services
+
+| Component | How to run | Port(s) |
+|-----------|-----------|---------|
+| Frontend (Vite dev) | `cd frontend && npm start` | 3000 |
+| Mock API server | `cd frontend && npm run mock:api` | 3001 |
+| Python SDK (local exec) | `source .venv/bin/activate` then use `SubprocessRunner` | N/A |
+
+### Gotchas
+
+- **Node.js version**: The system `/exec-daemon/node` (v22) takes precedence over nvm. The update script prepends `$HOME/.nvm/versions/node/v24.14.0/bin` to PATH. Always ensure `node --version` shows `v24.14.0` before running frontend commands. If not, run `export PATH="$HOME/.nvm/versions/node/v24.14.0/bin:$PATH"`.
+- **`protoc` is required**: The `make -C api python-dev` target needs system `protoc` (installed via `apt`), plus `grpcio-tools` in the venv. The update script handles both.
+- **`pipeline_spec_pb2.py` is NOT committed**: It must be generated via `make -C api python-dev` before the SDK can work. The update script does this.
+- **Pre-existing SDK test failure**: `TestPlatformConfig::test_pipeline_with_active_deadline_and_ttl` fails due to a proto field rename (`resourceTtlOnCompletion` → `resourceTtl`). This is a known pre-existing issue in master.
+- **Local execution tests timeout**: Tests in `sdk/python/kfp/local/pip_install_serialization_test.py` and some in `pipeline_orchestrator_test.py` may timeout (30s) in CI/cloud environments because they run subprocess pip installs. These are not indicative of SDK bugs.
+- **Commit sign-off**: Always use `git commit -s` per the repo's DCO policy.
+- **Frontend tests**: Run `npm run test:ui -- --run` (non-watch mode) for CI-style runs. The default `npm run test:ui` starts in watch mode.
+
+### Quick command reference
+
+See the [Quick reference](#quick-reference) section above for all essential commands. Key additions for Cloud:
+
+- Activate Python venv: `source .venv/bin/activate`
+- Ensure correct Node: `export PATH="$HOME/.nvm/versions/node/v24.14.0/bin:$PATH"`
