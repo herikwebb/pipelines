@@ -34,6 +34,20 @@ describe('isAllowedDomain', () => {
     expect(isAllowedDomain('https:///broken', '^example\\.com$')).toBe(false);
   });
 
+  it('rejects numeric IPv4 hosts after URL normalization', () => {
+    expect(isAllowedDomain('http://2852039166/latest/meta-data', '^.*$')).toBe(false);
+  });
+
+  it('rejects link-local, loopback, and private IP literals', () => {
+    expect(isAllowedDomain('http://169.254.169.254/latest/meta-data', '^.*$')).toBe(false);
+    expect(isAllowedDomain('http://127.0.0.1:8080/healthz', '^.*$')).toBe(false);
+    expect(isAllowedDomain('http://10.0.0.1/artifact', '^.*$')).toBe(false);
+  });
+
+  it('rejects localhost names', () => {
+    expect(isAllowedDomain('http://localhost:8080/healthz', '^.*$')).toBe(false);
+  });
+
   it('rejects a subdomain when the allowlist expects the exact host', () => {
     expect(isAllowedDomain('https://sub.example.com/path/to/artifact', '^example\\.com$')).toBe(
       false,
