@@ -213,6 +213,42 @@ describe('utils', () => {
         'File a/b/c not mounted, expecting the file to be inside volume mount subpath other',
       ]);
     });
+
+    it('rejects parent directory traversal', () => {
+      const path = resolveFilePathOnVolume({
+        volumeMountPath: '/data',
+        filePathInVolume: '../var/run/secrets/kubernetes.io/serviceaccount/token',
+        volumeMountSubPath: undefined,
+      });
+      expect(path).toEqual([
+        '',
+        'File ../var/run/secrets/kubernetes.io/serviceaccount/token resolves outside volume mount /data',
+      ]);
+    });
+
+    it('rejects absolute paths', () => {
+      const path = resolveFilePathOnVolume({
+        volumeMountPath: '/data',
+        filePathInVolume: '/var/run/secrets/kubernetes.io/serviceaccount/token',
+        volumeMountSubPath: undefined,
+      });
+      expect(path).toEqual([
+        '',
+        'File /var/run/secrets/kubernetes.io/serviceaccount/token resolves outside volume mount /data',
+      ]);
+    });
+
+    it('rejects parent directory traversal after volumeMountSubPath', () => {
+      const path = resolveFilePathOnVolume({
+        volumeMountPath: '/data',
+        filePathInVolume: 'subartifact/../../var/run/secrets/kubernetes.io/serviceaccount/token',
+        volumeMountSubPath: 'subartifact',
+      });
+      expect(path).toEqual([
+        '',
+        'File subartifact/../../var/run/secrets/kubernetes.io/serviceaccount/token resolves outside volume mount /data',
+      ]);
+    });
   });
 
   describe('parseError', () => {

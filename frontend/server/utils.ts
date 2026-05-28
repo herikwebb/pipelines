@@ -169,14 +169,22 @@ export function resolveFilePathOnVolume(volume: {
   volumeMountSubPath: string | undefined;
 }): [string, string | undefined] {
   const { filePathInVolume, volumeMountPath, volumeMountSubPath } = volume;
+  const resolveWithinMount = (relativePath: string): [string, string | undefined] => {
+    const mountPath = path.resolve(volumeMountPath);
+    const resolvedPath = path.resolve(mountPath, relativePath);
+    if (resolvedPath !== mountPath && !resolvedPath.startsWith(`${mountPath}/`)) {
+      return ['', `File ${filePathInVolume} resolves outside volume mount ${volumeMountPath}`];
+    }
+    return [resolvedPath, undefined];
+  };
+
   if (!volumeMountSubPath) {
-    return [path.join(volumeMountPath, filePathInVolume), undefined];
+    return resolveWithinMount(filePathInVolume);
   }
   if (filePathInVolume.startsWith(volumeMountSubPath)) {
-    return [
-      path.join(volumeMountPath, filePathInVolume.substring(volumeMountSubPath.length)),
-      undefined,
-    ];
+    return resolveWithinMount(
+      filePathInVolume.substring(volumeMountSubPath.length).replace(/^\/+/, ''),
+    );
   }
   return [
     '',
