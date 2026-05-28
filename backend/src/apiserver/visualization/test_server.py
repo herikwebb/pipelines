@@ -95,6 +95,17 @@ class TestServerEndpoints(tornado.testing.AsyncHTTPTestCase):
             body='type=test&source=gs://ml-pipeline/data.csv')
         self.assertEqual(200, response.code)
 
+    def test_generate_notebook_escapes_source_as_string_literal(self):
+        source = 'gs://bucket/data.csv"\nraise RuntimeError("injected")\n#'
+        nb = server.VisualizationHandler.generate_notebook_from_arguments(
+            None,
+            {},
+            source,
+            "test")
+        namespace = {}
+        exec(nb.cells[1].source, {}, namespace)
+        self.assertEqual(source, namespace["source"])
+
 
 if __name__ == "__main__":
     unittest.main()
