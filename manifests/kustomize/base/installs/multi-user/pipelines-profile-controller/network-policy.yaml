@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeflow-pipelines-profile-controller
+spec:
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: metacontroller
+    ports:
+    - port: 8080
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: kubeflow-pipelines-profile-controller
+  policyTypes:
+  - Ingress
