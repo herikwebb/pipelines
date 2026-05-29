@@ -64,6 +64,15 @@ interface ArtifactsQueryStrings {
   namespace?: string;
 }
 
+const SAFE_ARTIFACT_CONTENT_TYPE = 'text/plain; charset=utf-8';
+
+function setSafeArtifactResponseHeaders(res: Response): void {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (!res.getHeader('Content-Type')) {
+    res.setHeader('Content-Type', SAFE_ARTIFACT_CONTENT_TYPE);
+  }
+}
+
 export interface S3ProviderInfo {
   Provider: string;
   Params: {
@@ -357,6 +366,7 @@ function getHttpArtifactsHandler(
     }
     const { Readable } = await import('stream');
     const nodeStream = Readable.fromWeb(response.body as any);
+    setSafeArtifactResponseHeaders(res);
     nodeStream
       .on('error', (err: Error) => res.status(500).send(`Unable to retrieve artifact: ${err}`))
       .pipe(new PreviewStream({ peek }))
@@ -371,6 +381,7 @@ function getMinioArtifactHandler(
   return async (_: Request, res: Response) => {
     try {
       const stream = await getObjectStream(options);
+      setSafeArtifactResponseHeaders(res);
       stream
         .on('error', (err) => res.status(500).send(`Failed to get object in bucket: ${err}`))
         .pipe(new PreviewStream({ peek }))
@@ -432,6 +443,7 @@ async function previewDirectorySummary(
   }
   const baseName = key.replace(/\/+$/, '').split('/').pop() || 'artifact';
   const countLabel = `${summary.count}${summary.truncated ? '+' : ''}`;
+  setSafeArtifactResponseHeaders(res);
   res
     .type('text/plain')
     .send(`Directory artifact "${baseName}" — ${countLabel} file(s). Download to view contents.\n`);
@@ -456,6 +468,7 @@ async function streamDirectoryAsTarGz(
 
   const baseName = key.replace(/\/+$/, '').split('/').pop() || 'artifact';
   res.setHeader('Content-Type', 'application/gzip');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Disposition', buildAttachmentDisposition(`${baseName}.tar.gz`));
 
   const pack = tar.pack();
@@ -628,6 +641,7 @@ function getGCSArtifactHandler(
           credentials,
           objectName: matchingFiles[0],
         });
+        setSafeArtifactResponseHeaders(res);
         stream.pipe(new PreviewStream({ peek })).pipe(res);
         return;
       }
@@ -636,6 +650,7 @@ function getGCSArtifactHandler(
       for (const fileName of matchingFiles) {
         contents += (await readGCSObjectText(bucket, fileName, client, credentials)).trim() + '\n';
       }
+      setSafeArtifactResponseHeaders(res);
       res.send(contents);
     } catch (err) {
       res.status(500).send('Failed to download GCS file(s). Error: ' + err);
@@ -680,6 +695,7 @@ function getVolumeArtifactsHandler(options: { bucket: string; key: string }, pee
         return;
       }
 
+      setSafeArtifactResponseHeaders(res);
       fs.createReadStream(filePath).pipe(new PreviewStream({ peek })).pipe(res);
     } catch (err) {
       console.log(`Failed to open volume: ${err}`);

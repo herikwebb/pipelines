@@ -90,9 +90,11 @@ describe('/artifacts', () => {
       app = new UIServer(configs);
 
       const request = requests(app.app);
-      await request
+      const response = await request
         .get('/artifacts/get?source=minio&bucket=ml-pipeline&key=hello%2Fworld.txt')
         .expect(200, artifactContent);
+      expect(response.headers['content-type']).toContain('text/plain');
+      expect(response.headers['x-content-type-options']).toEqual('nosniff');
       expect(mockedMinioClient).toBeCalledWith({
         accessKey: 'minio',
         endPoint: 'seaweedfs.kubeflow',
@@ -492,9 +494,11 @@ describe('/artifacts', () => {
       app = new UIServer(configs);
 
       const request = requests(app.app);
-      await request
+      const response = await request
         .get('/artifacts/get?source=http&bucket=ml-pipeline&key=hello%2Fworld.txt')
         .expect(200, artifactContent);
+      expect(response.headers['content-type']).toContain('text/plain');
+      expect(response.headers['x-content-type-options']).toEqual('nosniff');
       expect(mockedFetch).toBeCalledWith('http://foo.bar/ml-pipeline/hello/world.txt', {
         headers: {},
       });
