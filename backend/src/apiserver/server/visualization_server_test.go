@@ -308,6 +308,34 @@ func TestCreateVisualization_Unauthorized(t *testing.T) {
 	)
 }
 
+func TestCreateVisualization_MultiUserRequiresNamespace(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	clientManager := resource.NewFakeClientManagerOrFatal(util.NewFakeTimeForEpoch())
+	resourceManager := resource.NewResourceManager(clientManager, &resource.ResourceManagerOptions{CollectMetrics: false})
+	defer clientManager.Close()
+
+	server := &VisualizationServer{
+		resourceManager: resourceManager,
+		serviceURL:      "http://host:port",
+	}
+	visualization := &apiv1beta1.Visualization{
+		Type:      apiv1beta1.Visualization_CUSTOM,
+		Arguments: `{"code":["print(1)"]}`,
+	}
+
+	request := &apiv1beta1.CreateVisualizationRequest{
+		Visualization: visualization,
+	}
+	_, err := server.CreateVisualizationV1(context.Background(), request)
+	assert.EqualError(
+		t,
+		err,
+		"Invalid input error: Namespace is required for visualization operations in multi-user mode",
+	)
+}
+
 func TestCreateVisualization_Unauthenticated(t *testing.T) {
 	viper.Set(common.MultiUserMode, "true")
 	defer viper.Set(common.MultiUserMode, "false")
