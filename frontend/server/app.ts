@@ -34,6 +34,7 @@ import { getPodInfoHandlers } from './handlers/pod-info.js';
 import { getClusterNameHandler, getProjectIdHandler } from './handlers/gke-metadata.js';
 import { getAllowCustomVisualizationsHandler } from './handlers/vis.js';
 import { getIndexHTMLHandler } from './handlers/index-html.js';
+import { getMlmdProxyAuthMiddleware } from './handlers/mlmd-proxy.js';
 
 import proxyMiddleware from './proxy-middleware.js';
 import { Server } from 'http';
@@ -328,6 +329,11 @@ function createUIServer(options: UIConfigs) {
   );
 
   /** Proxy metadata requests to the Envoy instance which will handle routing to the metadata gRPC server */
+  const mlmdProxyAuthMiddleware = getMlmdProxyAuthMiddleware(
+    options.auth.enabled,
+    options.auth.kubeflowUserIdHeader,
+  );
+  app.all('/ml_metadata.*', mlmdProxyAuthMiddleware);
   app.all(
     '/ml_metadata.*',
     createProxyMiddleware({
