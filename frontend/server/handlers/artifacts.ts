@@ -327,6 +327,21 @@ function getHttpUrl(source: 'http' | 'https', baseUrl: string, bucket: string, k
   return `${source}://${baseUrl}${bucket}/${key}`;
 }
 
+/**
+ * Fetches an HTTP(S) artifact without following redirects. Redirects would bypass
+ * the domain allowlist enforced before the request is issued.
+ */
+export async function fetchHttpArtifact(
+  url: string,
+  headers: Record<string, string>,
+): Promise<Response> {
+  const response = await fetch(url, { headers, redirect: 'manual' });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error('Redirects are not allowed when fetching artifacts');
+  }
+  return response;
+}
+
 function getHttpArtifactsHandler(
   allowedDomain: string,
   url: string,
@@ -350,7 +365,13 @@ function getHttpArtifactsHandler(
       res.status(500).send(`Domain not allowed.`);
       return;
     }
-    const response = await fetch(url, { headers });
+    let response: Response;
+    try {
+      response = await fetchHttpArtifact(url, headers);
+    } catch (err) {
+      res.status(500).send(`Unable to retrieve artifact: ${err}`);
+      return;
+    }
     if (!response.body) {
       res.status(500).send('Unable to retrieve artifact: empty response body');
       return;
