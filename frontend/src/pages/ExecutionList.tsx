@@ -46,6 +46,8 @@ import {
   serviceErrorToString,
 } from 'src/lib/Utils';
 import { Page } from 'src/pages/Page';
+import { NamespaceContext } from 'src/lib/KubeflowClient';
+import { applyWorkspaceFilterToListOptions } from 'src/mlmd/workspace-filter';
 
 interface ExecutionListProps {
   isGroupView: boolean;
@@ -59,6 +61,9 @@ interface ExecutionListState {
 }
 
 class ExecutionList extends Page<ExecutionListProps, ExecutionListState> {
+  static contextType = NamespaceContext;
+  declare context: React.ContextType<typeof NamespaceContext>;
+
   private tableRef = React.createRef<CustomTable>();
   private api = Api.getInstance();
   private executionTypesMap: Map<number, ExecutionType>;
@@ -133,6 +138,7 @@ class ExecutionList extends Page<ExecutionListProps, ExecutionListState> {
     if (request.pageSize) {
       listOperationOpts.setMaxResultSize(request.pageSize);
     }
+    applyWorkspaceFilterToListOptions(listOperationOpts, this.context);
     // TODO(jlyaoyuli): Add filter functionality for "entire" execution list.
 
     try {

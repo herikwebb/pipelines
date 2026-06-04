@@ -34,6 +34,8 @@ import { getPodInfoHandlers } from './handlers/pod-info.js';
 import { getClusterNameHandler, getProjectIdHandler } from './handlers/gke-metadata.js';
 import { getAllowCustomVisualizationsHandler } from './handlers/vis.js';
 import { getIndexHTMLHandler } from './handlers/index-html.js';
+import { getMlMetadataAuthMiddleware } from './handlers/ml-metadata-auth.js';
+import { getMlMetadataBodyMiddleware } from './handlers/ml-metadata-body.js';
 
 import proxyMiddleware from './proxy-middleware.js';
 import { Server } from 'http';
@@ -327,13 +329,31 @@ function createUIServer(options: UIConfigs) {
     getAllowCustomVisualizationsHandler(options.visualizations.allowCustomVisualizations),
   );
 
+  const mlMetadataAuthMiddleware = getMlMetadataAuthMiddleware(
+    authorizeFn,
+    options.auth.enabled,
+    options.auth.kubeflowUserIdHeader,
+  );
+  const mlMetadataBodyMiddleware = getMlMetadataBodyMiddleware(options.auth.enabled);
+
   /** Proxy metadata requests to the Envoy instance which will handle routing to the metadata gRPC server */
+  app.use(
+    '/ml_metadata',
+    express.raw({ type: () => true, limit: '32mb' }),
+    mlMetadataAuthMiddleware,
+    mlMetadataBodyMiddleware,
+  );
   app.all(
     '/ml_metadata.*',
     createProxyMiddleware({
       changeOrigin: true,
-      onProxyReq: (proxyReq) => {
+      onProxyReq: (proxyReq, req) => {
         console.log('Metadata proxied request: ', (proxyReq as any).path);
+        const body = (req as express.Request).body;
+        if (Buffer.isBuffer(body) && body.length) {
+          proxyReq.setHeader('Content-Length', body.length);
+          proxyReq.write(body);
+        }
       },
       headers: HACK_FIX_HPM_PARTIAL_RESPONSE_HEADERS,
       target: envoyServiceAddress,

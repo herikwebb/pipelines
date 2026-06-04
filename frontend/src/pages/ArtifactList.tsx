@@ -49,6 +49,8 @@ import {
   serviceErrorToString,
 } from 'src/lib/Utils';
 import { Page } from 'src/pages/Page';
+import { NamespaceContext } from 'src/lib/KubeflowClient';
+import { applyWorkspaceFilterToListOptions } from 'src/mlmd/workspace-filter';
 
 interface ArtifactListProps {
   isGroupView: boolean;
@@ -69,6 +71,9 @@ const NAME_FIELDS = [
 ];
 
 export class ArtifactList extends Page<ArtifactListProps, ArtifactListState> {
+  static contextType = NamespaceContext;
+  declare context: React.ContextType<typeof NamespaceContext>;
+
   private tableRef = React.createRef<CustomTable>();
   private api = Api.getInstance();
   private artifactTypesMap: Map<number, ArtifactType>;
@@ -144,6 +149,7 @@ export class ArtifactList extends Page<ArtifactListProps, ArtifactListState> {
     if (request.pageToken) {
       listOperationOpts.setNextPageToken(request.pageToken);
     }
+    applyWorkspaceFilterToListOptions(listOperationOpts, this.context);
     // TODO(jlyaoyuli): Add filter functionality for "entire" artifact list.
 
     // TODO: Consider making an Api method for returning and caching types
