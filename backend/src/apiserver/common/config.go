@@ -57,6 +57,7 @@ const (
 	PluginMaxPayloadBytes                   string = "PLUGIN_MAX_PAYLOAD_BYTES"
 	PluginMaxTotalPayloadBytes              string = "PLUGIN_MAX_TOTAL_PAYLOAD_BYTES"
 	PluginMaxNestingDepth                   string = "PLUGIN_MAX_NESTING_DEPTH"
+	AllowCustomVisualizations               string = "ALLOW_CUSTOM_VISUALIZATIONS"
 )
 
 type PluginLimitsConfig struct {
@@ -155,6 +156,10 @@ func IsMultiUserMode() bool {
 
 func IsMultiUserSharedReadMode() bool {
 	return GetBoolConfigWithDefault(MultiUserModeSharedReadAccess, false)
+}
+
+func IsCustomVisualizationsAllowed() bool {
+	return GetBoolConfigWithDefault(AllowCustomVisualizations, true)
 }
 
 func GetPodNamespace() string {
