@@ -350,7 +350,15 @@ function getHttpArtifactsHandler(
       res.status(500).send(`Domain not allowed.`);
       return;
     }
-    const response = await fetch(url, { headers });
+    const response = await fetch(url, { headers, redirect: 'manual' });
+    if (response.status >= 300 && response.status < 400) {
+      res.status(500).send('Unable to retrieve artifact: redirects are not allowed');
+      return;
+    }
+    if (!response.ok) {
+      res.status(500).send(`Unable to retrieve artifact: upstream returned ${response.status}`);
+      return;
+    }
     if (!response.body) {
       res.status(500).send('Unable to retrieve artifact: empty response body');
       return;

@@ -481,6 +481,8 @@ describe('/artifacts', () => {
       mockedFetch.mockImplementationOnce((url: string, opts: any) =>
         url === 'http://foo.bar/ml-pipeline/hello/world.txt'
           ? Promise.resolve({
+              ok: true,
+              status: 200,
               buffer: () => Promise.resolve(artifactContent),
               body: toWebStream(artifactContent),
             })
@@ -497,7 +499,29 @@ describe('/artifacts', () => {
         .expect(200, artifactContent);
       expect(mockedFetch).toBeCalledWith('http://foo.bar/ml-pipeline/hello/world.txt', {
         headers: {},
+        redirect: 'manual',
       });
+    });
+
+    it('rejects http artifact responses that redirect to another host', async () => {
+      mockedFetch.mockImplementationOnce((url: string) =>
+        url === 'http://foo.bar/ml-pipeline/hello/world.txt'
+          ? Promise.resolve({
+              status: 302,
+              headers: { get: () => 'http://169.254.169.254/latest/meta-data/' },
+            })
+          : Promise.reject('Unable to retrieve http artifact.'),
+      );
+      const configs = loadConfigs(argv, {
+        HTTP_BASE_URL: 'foo.bar/',
+        ALLOWED_ARTIFACT_DOMAIN_REGEX: '^foo\\.bar$',
+      });
+      app = new UIServer(configs);
+
+      const request = requests(app.app);
+      await request
+        .get('/artifacts/get?source=http&bucket=ml-pipeline&key=hello%2Fworld.txt')
+        .expect(500, 'Unable to retrieve artifact: redirects are not allowed');
     });
 
     it('responds with partial http artifact if peek=5 flag is set', async () => {
@@ -506,6 +530,8 @@ describe('/artifacts', () => {
       mockedFetch.mockImplementationOnce((url: string, opts: any) =>
         url === 'http://foo.bar/ml-pipeline/hello/world.txt'
           ? Promise.resolve({
+              ok: true,
+              status: 200,
               buffer: () => Promise.resolve(artifactContent),
               body: toWebStream(artifactContent),
             })
@@ -522,6 +548,7 @@ describe('/artifacts', () => {
         .expect(200, artifactContent.slice(0, 5));
       expect(mockedFetch).toBeCalledWith('http://foo.bar/ml-pipeline/hello/world.txt', {
         headers: {},
+        redirect: 'manual',
       });
     });
 
@@ -531,6 +558,8 @@ describe('/artifacts', () => {
         url === 'https://foo.bar/ml-pipeline/hello/world.txt' &&
         opts.headers.Authorization === 'someToken'
           ? Promise.resolve({
+              ok: true,
+              status: 200,
               buffer: () => Promise.resolve(artifactContent),
               body: toWebStream(artifactContent),
             })
@@ -551,6 +580,7 @@ describe('/artifacts', () => {
         headers: {
           Authorization: 'someToken',
         },
+        redirect: 'manual',
       });
     });
 
@@ -559,6 +589,8 @@ describe('/artifacts', () => {
       mockedFetch.mockImplementationOnce((url: string, _opts: any) =>
         url === 'https://foo.bar/ml-pipeline/hello/world.txt'
           ? Promise.resolve({
+              ok: true,
+              status: 200,
               buffer: () => Promise.resolve(artifactContent),
               body: toWebStream(artifactContent),
             })
@@ -579,6 +611,7 @@ describe('/artifacts', () => {
         headers: {
           Authorization: 'inheritedToken',
         },
+        redirect: 'manual',
       });
     });
 
