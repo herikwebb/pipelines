@@ -287,6 +287,16 @@ def test_sync_server_without_pipeline_enabled(sync_server, data, expected_status
     assert results['children'] == expected_children
 
 
+def test_tenant_iam_policy_resources_exclude_global_artifacts_prefix():
+    namespace = "user-example-com"
+    resources = sync.tenant_iam_policy_resources(namespace)
+
+    assert f"arn:aws:s3:::mlpipeline/artifacts/*" not in resources
+    assert f"arn:aws:s3:::mlpipeline/private-artifacts/{namespace}/*" in resources
+    assert f"arn:aws:s3:::mlpipeline/private/{namespace}/*" in resources
+    assert f"arn:aws:s3:::mlpipeline/shared/*" in resources
+
+
 def test_create_iam_client_uses_endpoint(monkeypatch):
     called = {}
 

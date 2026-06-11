@@ -23,6 +23,16 @@ import botocore.session
 
 S3_BUCKET_NAME = 'mlpipeline'
 
+
+def tenant_iam_policy_resources(namespace, bucket_name=S3_BUCKET_NAME):
+    """Return S3 resource ARNs scoped to a single Kubeflow profile namespace."""
+    return [
+        f"arn:aws:s3:::{bucket_name}/private-artifacts/{namespace}/*",
+        f"arn:aws:s3:::{bucket_name}/private/{namespace}/*",
+        f"arn:aws:s3:::{bucket_name}/shared/*",
+    ]
+
+
 session = botocore.session.get_session()
 # S3 client for lifecycle policy management
 s3_endpoint_url = os.environ.get("S3_ENDPOINT_URL", "http://seaweedfs.kubeflow:8333")
@@ -398,12 +408,7 @@ def server_factory(frontend_image,
                                     "s3:Get*",
                                     "s3:List*"
                                 ],
-                                "Resource": [
-                                    f"arn:aws:s3:::{S3_BUCKET_NAME}/artifacts/*",
-                                    f"arn:aws:s3:::{S3_BUCKET_NAME}/private-artifacts/{namespace}/*",
-                                    f"arn:aws:s3:::{S3_BUCKET_NAME}/private/{namespace}/*",
-                                    f"arn:aws:s3:::{S3_BUCKET_NAME}/shared/*",
-                                ]
+                                "Resource": tenant_iam_policy_resources(namespace),
                             }]
                         })
                 )
