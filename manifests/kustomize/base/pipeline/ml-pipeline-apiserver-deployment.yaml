@@ -115,6 +115,8 @@ spec:
               value: "true"
             - name: LOG_LEVEL
               value: "info"
+            - name: ALLOW_CUSTOM_VISUALIZATIONS
+              value: "true"
             # Driver / launcher log level during pipeline execution
             - name: PIPELINE_LOG_LEVEL
               value: "1"

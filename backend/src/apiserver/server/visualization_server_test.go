@@ -89,6 +89,9 @@ func TestValidateCreateVisualizationRequest_SourceIsEmpty(t *testing.T) {
 func TestValidateCreateVisualizationRequest_SourceIsEmptyAndTypeIsCustom(t *testing.T) {
 	clients, manager, _ := initWithExperiment(t)
 	defer clients.Close()
+	viper.Set(common.AllowCustomVisualizations, "true")
+	defer viper.Set(common.AllowCustomVisualizations, "")
+
 	server := &VisualizationServer{
 		resourceManager: manager,
 	}
@@ -98,6 +101,45 @@ func TestValidateCreateVisualizationRequest_SourceIsEmptyAndTypeIsCustom(t *test
 	}
 	request := &apiv1beta1.CreateVisualizationRequest{
 		Visualization: visualization,
+	}
+	err := server.validateCreateVisualizationRequest(request)
+	assert.Nil(t, err)
+}
+
+func TestValidateCreateVisualizationRequest_CustomDisabled(t *testing.T) {
+	clients, manager, _ := initWithExperiment(t)
+	defer clients.Close()
+	viper.Set(common.AllowCustomVisualizations, "false")
+	defer viper.Set(common.AllowCustomVisualizations, "")
+
+	server := &VisualizationServer{
+		resourceManager: manager,
+	}
+	request := &apiv1beta1.CreateVisualizationRequest{
+		Visualization: &apiv1beta1.Visualization{
+			Type:      apiv1beta1.Visualization_CUSTOM,
+			Arguments: `{"code":["import os"]}`,
+		},
+	}
+	err := server.validateCreateVisualizationRequest(request)
+	assert.NotNil(t, err)
+	assert.Contains(t, err.Error(), "Custom visualizations are disabled")
+}
+
+func TestValidateCreateVisualizationRequest_CustomEnabled(t *testing.T) {
+	clients, manager, _ := initWithExperiment(t)
+	defer clients.Close()
+	viper.Set(common.AllowCustomVisualizations, "true")
+	defer viper.Set(common.AllowCustomVisualizations, "")
+
+	server := &VisualizationServer{
+		resourceManager: manager,
+	}
+	request := &apiv1beta1.CreateVisualizationRequest{
+		Visualization: &apiv1beta1.Visualization{
+			Type:      apiv1beta1.Visualization_CUSTOM,
+			Arguments: `{"code":["import os"]}`,
+		},
 	}
 	err := server.validateCreateVisualizationRequest(request)
 	assert.Nil(t, err)
