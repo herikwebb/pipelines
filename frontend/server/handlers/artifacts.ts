@@ -350,7 +350,19 @@ function getHttpArtifactsHandler(
       res.status(500).send(`Domain not allowed.`);
       return;
     }
-    const response = await fetch(url, { headers });
+    let response: Response;
+    try {
+      // Reject redirects so an allowlisted host cannot bounce the UI server to
+      // internal targets such as cloud metadata endpoints.
+      response = await fetch(url, { headers, redirect: 'error' });
+    } catch (err) {
+      res.status(500).send(`Unable to retrieve artifact: ${err}`);
+      return;
+    }
+    if (!response.ok) {
+      res.status(500).send(`Unable to retrieve artifact: HTTP ${response.status}`);
+      return;
+    }
     if (!response.body) {
       res.status(500).send('Unable to retrieve artifact: empty response body');
       return;

@@ -42,6 +42,15 @@ function toWebStream(content: string): ReadableStream<Uint8Array> {
   return Readable.toWeb(pt) as ReadableStream<Uint8Array>;
 }
 
+function mockFetchResponse(content: string) {
+  return {
+    ok: true,
+    status: 200,
+    buffer: () => Promise.resolve(content),
+    body: toWebStream(content),
+  };
+}
+
 describe('/artifacts', () => {
   let app: UIServer;
   const { argv } = commonSetup();
@@ -480,10 +489,7 @@ describe('/artifacts', () => {
       const artifactContent = 'hello world';
       mockedFetch.mockImplementationOnce((url: string, opts: any) =>
         url === 'http://foo.bar/ml-pipeline/hello/world.txt'
-          ? Promise.resolve({
-              buffer: () => Promise.resolve(artifactContent),
-              body: toWebStream(artifactContent),
-            })
+          ? Promise.resolve(mockFetchResponse(artifactContent))
           : Promise.reject('Unable to retrieve http artifact.'),
       );
       const configs = loadConfigs(argv, {
@@ -497,7 +503,26 @@ describe('/artifacts', () => {
         .expect(200, artifactContent);
       expect(mockedFetch).toBeCalledWith('http://foo.bar/ml-pipeline/hello/world.txt', {
         headers: {},
+        redirect: 'error',
       });
+    });
+
+    it('rejects http artifact responses that redirect to another host', async () => {
+      mockedFetch.mockImplementationOnce((_url: string, opts: { redirect?: string }) => {
+        if (opts.redirect === 'error') {
+          return Promise.reject(new TypeError('redirect is not allowed'));
+        }
+        return Promise.reject('fetch should not follow redirects');
+      });
+      const configs = loadConfigs(argv, {
+        HTTP_BASE_URL: 'foo.bar/',
+      });
+      app = new UIServer(configs);
+
+      const request = requests(app.app);
+      await request
+        .get('/artifacts/get?source=http&bucket=ml-pipeline&key=hello%2Fworld.txt')
+        .expect(500, /Unable to retrieve artifact/);
     });
 
     it('responds with partial http artifact if peek=5 flag is set', async () => {
@@ -505,10 +530,7 @@ describe('/artifacts', () => {
       const mockedFetch: Mock = fetch as any;
       mockedFetch.mockImplementationOnce((url: string, opts: any) =>
         url === 'http://foo.bar/ml-pipeline/hello/world.txt'
-          ? Promise.resolve({
-              buffer: () => Promise.resolve(artifactContent),
-              body: toWebStream(artifactContent),
-            })
+          ? Promise.resolve(mockFetchResponse(artifactContent))
           : Promise.reject('Unable to retrieve http artifact.'),
       );
       const configs = loadConfigs(argv, {
@@ -522,6 +544,7 @@ describe('/artifacts', () => {
         .expect(200, artifactContent.slice(0, 5));
       expect(mockedFetch).toBeCalledWith('http://foo.bar/ml-pipeline/hello/world.txt', {
         headers: {},
+        redirect: 'error',
       });
     });
 
@@ -530,10 +553,7 @@ describe('/artifacts', () => {
       mockedFetch.mockImplementationOnce((url: string, opts: any) =>
         url === 'https://foo.bar/ml-pipeline/hello/world.txt' &&
         opts.headers.Authorization === 'someToken'
-          ? Promise.resolve({
-              buffer: () => Promise.resolve(artifactContent),
-              body: toWebStream(artifactContent),
-            })
+          ? Promise.resolve(mockFetchResponse(artifactContent))
           : Promise.reject('Unable to retrieve http artifact.'),
       );
       const configs = loadConfigs(argv, {
@@ -551,6 +571,7 @@ describe('/artifacts', () => {
         headers: {
           Authorization: 'someToken',
         },
+        redirect: 'error',
       });
     });
 
@@ -558,10 +579,7 @@ describe('/artifacts', () => {
       const artifactContent = 'hello world';
       mockedFetch.mockImplementationOnce((url: string, _opts: any) =>
         url === 'https://foo.bar/ml-pipeline/hello/world.txt'
-          ? Promise.resolve({
-              buffer: () => Promise.resolve(artifactContent),
-              body: toWebStream(artifactContent),
-            })
+          ? Promise.resolve(mockFetchResponse(artifactContent))
           : Promise.reject('Unable to retrieve http artifact.'),
       );
       const configs = loadConfigs(argv, {
@@ -579,6 +597,7 @@ describe('/artifacts', () => {
         headers: {
           Authorization: 'inheritedToken',
         },
+        redirect: 'error',
       });
     });
 
