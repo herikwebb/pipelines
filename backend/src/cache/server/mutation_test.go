@@ -36,6 +36,7 @@ var (
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default",
 			Annotations: map[string]string{
 				ArgoWorkflowNodeName: "test_node",
 			},
@@ -169,7 +170,7 @@ func TestMutatePodIfCached(t *testing.T) {
 
 func TestMutatePodIfCachedWithCacheEntryExist(t *testing.T) {
 	executionCache := &model.ExecutionCache{
-		ExecutionCacheKey: "07f2c42567af4f141a52887e0a113c9aefdfdfd5e6b06b9908f7fdb0b43739af",
+		ExecutionCacheKey: "8df58208e291dd007f3f93d0190f84dde9d851d0d2d78cc6d58da9b38c742872",
 		ExecutionOutput:   "testOutput",
 		ExecutionTemplate: `{"container":{"command":["echo", "Hello"],"image":"python:3.11"}}`,
 		MaxCacheStaleness: -1,
@@ -188,7 +189,7 @@ func TestMutatePodIfCachedWithCacheEntryExist(t *testing.T) {
 
 func TestDefaultImage(t *testing.T) {
 	executionCache := &model.ExecutionCache{
-		ExecutionCacheKey: "07f2c42567af4f141a52887e0a113c9aefdfdfd5e6b06b9908f7fdb0b43739af",
+		ExecutionCacheKey: "8df58208e291dd007f3f93d0190f84dde9d851d0d2d78cc6d58da9b38c742872",
 		ExecutionOutput:   "testOutput",
 		ExecutionTemplate: `{"container":{"command":["echo", "Hello"],"image":"python:3.11"}}`,
 		MaxCacheStaleness: -1,
@@ -207,7 +208,7 @@ func TestSetImage(t *testing.T) {
 	defer os.Unsetenv("CACHE_IMAGE")
 
 	executionCache := &model.ExecutionCache{
-		ExecutionCacheKey: "f5fe913be7a4516ebfe1b5de29bcb35edd12ecc776b2f33f10ca19709ea3b2f0",
+		ExecutionCacheKey: "8df58208e291dd007f3f93d0190f84dde9d851d0d2d78cc6d58da9b38c742872",
 		ExecutionOutput:   "testOutput",
 		ExecutionTemplate: `{"container":{"command":["echo", "Hello"],"image":"python:3.11"}}`,
 		MaxCacheStaleness: -1,
@@ -224,7 +225,7 @@ func TestCacheNodeRestriction(t *testing.T) {
 	os.Setenv("CACHE_NODE_RESTRICTIONS", "false")
 
 	executionCache := &model.ExecutionCache{
-		ExecutionCacheKey: "f5fe913be7a4516ebfe1b5de29bcb35edd12ecc776b2f33f10ca19709ea3b2f0",
+		ExecutionCacheKey: "8df58208e291dd007f3f93d0190f84dde9d851d0d2d78cc6d58da9b38c742872",
 		ExecutionOutput:   "testOutput",
 		ExecutionTemplate: `{"container":{"command":["echo", "Hello"],"image":"python:3.11"},"nodeSelector":{"disktype":"ssd"}}`,
 		MaxCacheStaleness: -1,
@@ -239,7 +240,7 @@ func TestCacheNodeRestriction(t *testing.T) {
 
 func TestMutatePodIfCachedWithTeamplateCleanup(t *testing.T) {
 	executionCache := &model.ExecutionCache{
-		ExecutionCacheKey: "4b868c5d0b64e4d93e529eadaa04f0451eb5ae5c652dd79c08bdc47a6a1fe67a",
+		ExecutionCacheKey: "b5b35361cfb404cfd0c28f0a8b31006c000c04fb7b48f71bc99eaaffba1c7809",
 		ExecutionOutput:   "testOutput",
 		ExecutionTemplate: `Cache key was calculated from this: {"container":{"command":["echo", "Hello"],"image":"python:3.11"},"outputs":"anything"}`,
 		MaxCacheStaleness: -1,
@@ -269,4 +270,25 @@ func TestMutatePodIfCachedWithTeamplateCleanup(t *testing.T) {
 	require.Equal(t, patchOperation[0].Op, OperationTypeReplace)
 	require.Equal(t, patchOperation[1].Op, OperationTypeAdd)
 	require.Equal(t, patchOperation[2].Op, OperationTypeAdd)
+}
+
+func TestMutatePodIfCachedDoesNotReuseCacheFromOtherNamespace(t *testing.T) {
+	executionCache := &model.ExecutionCache{
+		ExecutionCacheKey: "8df58208e291dd007f3f93d0190f84dde9d851d0d2d78cc6d58da9b38c742872",
+		ExecutionOutput:   "testOutput",
+		ExecutionTemplate: `{"container":{"command":["echo", "Hello"],"image":"python:3.11"}}`,
+		MaxCacheStaleness: -1,
+	}
+	fakeClientManager.CacheStore().CreateExecutionCache(executionCache)
+
+	otherNamespacePod := *fakePod.DeepCopy()
+	otherNamespacePod.Namespace = "kubeflow-user-attacker"
+	otherNamespaceRequest := *GetFakeRequestFromPod(&otherNamespacePod)
+	otherNamespaceRequest.Namespace = "kubeflow-user-attacker"
+
+	patchOperation, err := MutatePodIfCached(&otherNamespaceRequest, fakeClientManager)
+	assert.Nil(t, err)
+	require.NotNil(t, patchOperation)
+	require.Equal(t, 2, len(patchOperation))
+	require.Equal(t, patchOperation[0].Op, OperationTypeAdd)
 }

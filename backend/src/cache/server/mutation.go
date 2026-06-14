@@ -109,8 +109,13 @@ func MutatePodIfCached(req *v1beta1.AdmissionRequest, clientMgr ClientManagerInt
 		return patches, nil
 	}
 
-	// Generate the executionHashKey based on pod.metadata.annotations.workflows.argoproj.io/template
-	executionHashKey, err := generateCacheKeyFromTemplate(template)
+	// Generate the executionHashKey based on pod template and namespace so cache
+	// entries cannot be shared across tenants in multi-user deployments.
+	podNamespace := pod.Namespace
+	if podNamespace == "" {
+		podNamespace = req.Namespace
+	}
+	executionHashKey, err := generateCacheKeyFromTemplate(template, podNamespace)
 	log.Println(executionHashKey)
 	if err != nil {
 		log.Printf("Unable to generate cache key for pod %s : %s", pod.ObjectMeta.Name, err.Error())
@@ -249,7 +254,7 @@ func intersectStructureWithSkeleton(src map[string]interface{}, skeleton map[str
 	return result
 }
 
-func generateCacheKeyFromTemplate(template string) (string, error) {
+func generateCacheKeyFromTemplate(template string, namespace string) (string, error) {
 	var templateMap map[string]interface{}
 	b := []byte(template)
 	err := json.Unmarshal(b, &templateMap)
@@ -273,6 +278,7 @@ func generateCacheKeyFromTemplate(template string) (string, error) {
 		"sidecars":       nil,
 	}
 	cacheKeyMap := intersectStructureWithSkeleton(templateMap, templateSkeleton)
+	cacheKeyMap["namespace"] = namespace
 
 	b, err = json.Marshal(cacheKeyMap)
 	if err != nil {
