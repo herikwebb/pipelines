@@ -3591,6 +3591,29 @@ func TestReportWorkflowResource_ScheduledWorkflowIDEmpty_Success(t *testing.T) {
 	assert.Equal(t, expectedRun.ToV1(), run.ToV1())
 }
 
+func TestReportWorkflowResource_RunNamespaceMismatch(t *testing.T) {
+	store, manager, run := initWithOneTimeRun(t)
+	defer store.Close()
+
+	originalState := run.State
+	workflow := util.NewWorkflow(&v1alpha1.Workflow{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      "forged-workflow",
+			Namespace: "attacker-ns",
+			Labels:    map[string]string{util.LabelKeyWorkflowRunId: run.UUID},
+		},
+		Status: v1alpha1.WorkflowStatus{Phase: v1alpha1.WorkflowSucceeded},
+	})
+	_, err := manager.ReportWorkflowResource(context.Background(), workflow)
+	require.NotNil(t, err)
+	assert.Equal(t, codes.InvalidArgument, err.(*util.UserError).ExternalStatusCode())
+	assert.Contains(t, err.Error(), "does not match run")
+
+	unchangedRun, err := manager.GetRun(run.UUID)
+	require.NoError(t, err)
+	assert.Equal(t, originalState, unchangedRun.State)
+}
+
 func TestReportWorkflowResource_ScheduledWorkflowIDNotEmpty_Success(t *testing.T) {
 	store, manager, job := initWithJob(t)
 	defer store.Close()

@@ -1560,6 +1560,27 @@ func (r *ResourceManager) ReportWorkflowResource(ctx context.Context, execSpec u
 	// If run already exists, simply update it
 	run, updateError := r.GetRun(runId)
 	if updateError == nil {
+		expectedNamespace := run.Namespace
+		if expectedNamespace == "" {
+			expectedNamespace, updateError = r.GetNamespaceFromExperimentId(run.ExperimentId)
+			if updateError != nil {
+				return nil, util.Wrapf(updateError, "Failed to resolve namespace for run %s", runId)
+			}
+		}
+		if expectedNamespace != "" && expectedNamespace != execSpec.ExecutionNamespace() {
+			glog.Errorf("Rejecting reported workflow name=%q namespace=%q runId=%q because run namespace is %q",
+				execSpec.ExecutionName(), execSpec.ExecutionNamespace(), runId, expectedNamespace)
+			if err := r.getWorkflowClient(execSpec.ExecutionNamespace()).Delete(ctx, execSpec.ExecutionName(), v1.DeleteOptions{}); err != nil && !util.IsNotFound(err) {
+				return nil, util.NewInternalServerError(err, "Failed to delete workflow with mismatched run namespace for run %s", runId)
+			}
+			if r.options.CollectMetrics {
+				workflowGCCounter.Inc()
+			}
+			return nil, util.NewInvalidInputError(
+				"Workflow namespace %q does not match run %s namespace %q",
+				execSpec.ExecutionNamespace(), runId, expectedNamespace)
+		}
+		updateError = nil
 		run.State = state
 		run.Conditions = string(state.ToV1())
 		run.FinishedAtInSec = execStatus.FinishedAt()
@@ -1635,6 +1656,19 @@ func (r *ResourceManager) ReportWorkflowResource(ctx context.Context, execSpec u
 		}
 		if namespace == "" {
 			namespace = execSpec.ExecutionNamespace()
+		}
+		if namespace != "" && namespace != execSpec.ExecutionNamespace() {
+			glog.Errorf("Rejecting reported workflow name=%q namespace=%q runId=%q because recurring run namespace is %q",
+				execSpec.ExecutionName(), execSpec.ExecutionNamespace(), runId, namespace)
+			if err := r.getWorkflowClient(execSpec.ExecutionNamespace()).Delete(ctx, execSpec.ExecutionName(), v1.DeleteOptions{}); err != nil && !util.IsNotFound(err) {
+				return nil, util.NewInternalServerError(err, "Failed to delete workflow with mismatched run namespace for run %s", runId)
+			}
+			if r.options.CollectMetrics {
+				workflowGCCounter.Inc()
+			}
+			return nil, util.NewInvalidInputError(
+				"Workflow namespace %q does not match recurring run namespace %q for run %s",
+				execSpec.ExecutionNamespace(), namespace, runId)
 		}
 		// Scheduled time equals created time if it is not specified
 		scheduledTimeInSec := execSpec.ScheduledAtInSecOr0()
