@@ -91,14 +91,13 @@ type MLflowPluginSettings struct {
 }
 
 // MergePluginConfig merges namespace-level overrides into the global config.
-// The namespace config takes precedence on non-zero fields.
+// The namespace config takes precedence on non-zero fields except Endpoint, which
+// must remain admin-controlled to prevent namespace users from redirecting API
+// server outbound requests.
 func MergePluginConfig(globalCfg PluginConfig, namespaceCfg *PluginConfig) PluginConfig {
 	merged := globalCfg
 	if namespaceCfg == nil {
 		return merged
-	}
-	if namespaceCfg.Endpoint != "" {
-		merged.Endpoint = namespaceCfg.Endpoint
 	}
 	if namespaceCfg.Timeout != "" {
 		merged.Timeout = namespaceCfg.Timeout

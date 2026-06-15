@@ -265,7 +265,7 @@ func TestMergePluginConfigAndSettingsDefaults(t *testing.T) {
 	}
 
 	merged := commonmlflow.MergePluginConfig(global, namespace)
-	assert.Equal(t, "https://ns-mlflow.example.com", merged.Endpoint)
+	assert.Equal(t, "https://global-mlflow.example.com", merged.Endpoint)
 	assert.Equal(t, "30s", merged.Timeout)
 
 	settings := ApplySettingsDefaults(merged.Settings)
