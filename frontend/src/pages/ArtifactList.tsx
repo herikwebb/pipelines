@@ -48,6 +48,7 @@ import {
   rowFilterFn,
   serviceErrorToString,
 } from 'src/lib/Utils';
+import { getSelectedNamespace } from 'src/lib/KubeflowClient';
 import { Page } from 'src/pages/Page';
 
 interface ArtifactListProps {
@@ -191,6 +192,11 @@ export class ArtifactList extends Page<ArtifactListProps, ArtifactListState> {
     listOperationOpts?: metadataStorePb.ListOperationOptions,
   ): Promise<Artifact[]> {
     try {
+      if (getSelectedNamespace()) {
+        // The global ML Metadata list API is not tenant-safe and is blocked by the UI server
+        // in multi-user mode. Namespace-scoped listing will be added in a follow-up change.
+        return [];
+      }
       const response = await this.api.metadataStoreService.getArtifacts(
         new GetArtifactsRequest().setOptions(listOperationOpts),
       );

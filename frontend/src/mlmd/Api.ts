@@ -14,7 +14,32 @@
  * limitations under the License.
  */
 
+import { getSelectedNamespace } from 'src/lib/KubeflowClient';
 import { MetadataStoreServicePromiseClient } from 'src/third_party/mlmd';
+
+const ML_METADATA_NAMESPACE_HEADER = 'x-kfp-namespace';
+
+function patchFetchForMlMetadataNamespace(): void {
+  if (typeof window === 'undefined' || (window as any).__kfpMlMetadataFetchPatched) {
+    return;
+  }
+
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url =
+      typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('/ml_metadata.')) {
+      const namespace = getSelectedNamespace();
+      if (namespace) {
+        const headers = new Headers(init?.headers);
+        headers.set(ML_METADATA_NAMESPACE_HEADER, namespace);
+        init = { ...init, headers };
+      }
+    }
+    return originalFetch(input, init);
+  };
+  (window as any).__kfpMlMetadataFetchPatched = true;
+}
 
 /** Known Artifact properties */
 export enum ArtifactProperties {
@@ -75,6 +100,7 @@ export class Api {
    */
   public static getInstance(): Api {
     if (!Api.instance) {
+      patchFetchForMlMetadataNamespace();
       Api.instance = new Api();
     }
     return Api.instance;

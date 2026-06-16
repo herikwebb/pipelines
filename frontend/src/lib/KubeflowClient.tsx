@@ -32,6 +32,11 @@ function onNamespaceChanged(handler: (namespace: string) => void) {
   registeredHandler = handler;
 }
 
+/** Returns the namespace currently selected in the Kubeflow central dashboard. */
+export function getSelectedNamespace(): string | undefined {
+  return namespace;
+}
+
 export function init(): void {
   try {
     // Init method will invoke the callback with the event handler instance
