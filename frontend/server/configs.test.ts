@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import * as os from 'os';
+import { vi } from 'vitest';
 import { loadConfigs } from './configs.js';
 
 describe('loadConfigs', () => {
@@ -41,12 +42,16 @@ describe('loadConfigs', () => {
     expect(configs.viewer.tensorboard.clusterDomain).toBe('cluster.corp');
   });
 
-  it('tensorboard proxy signing secret defaults to the minio secret', () => {
+  it('tensorboard proxy signing secret uses an ephemeral secret when unset', () => {
     const tmpdir = os.tmpdir();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const configs = loadConfigs(['node', 'dist/server.js', tmpdir], {
       MINIO_SECRET_KEY: 'shared-minio-secret',
     });
-    expect(configs.viewer.tensorboard.proxySigningSecret).toBe('shared-minio-secret');
+    expect(configs.viewer.tensorboard.proxySigningSecret).not.toBe('shared-minio-secret');
+    expect(configs.viewer.tensorboard.proxySigningSecret.length).toBeGreaterThan(0);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it('tensorboard proxy signing secret uses TENSORBOARD_PROXY_SIGNING_SECRET when set', () => {

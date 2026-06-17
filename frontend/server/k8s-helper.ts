@@ -201,6 +201,32 @@ export async function getTensorboardInstance(
  * Finds a running TensorBoard instance with the given logdir and deletes it.
  */
 
+/**
+ * Returns whether a Viewer custom resource exists in the given namespace.
+ */
+export async function viewerExists(namespace: string, viewerName: string): Promise<boolean> {
+  if (!isAllowedResourceName(namespace) || !isAllowedResourceName(viewerName)) {
+    return false;
+  }
+
+  try {
+    await k8sV1CustomObjectClient.getNamespacedCustomObject({
+      group: viewerGroup,
+      version: viewerVersion,
+      namespace,
+      plural: viewerPlural,
+      name: viewerName,
+    });
+    return true;
+  } catch (error: any) {
+    const statusCode = error?.statusCode ?? error?.response?.statusCode;
+    if (statusCode === 404) {
+      return false;
+    }
+    throw error;
+  }
+}
+
 export async function deleteTensorboardInstance(logdir: string, namespace: string): Promise<void> {
   const currentPod = await getTensorboardInstance(logdir, namespace);
   if (!currentPod.viewerName) {

@@ -14,8 +14,9 @@
 
 import express from 'express';
 import requests from 'supertest';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { ErrorDetails } from '../utils.js';
+import * as k8sHelper from '../k8s-helper.js';
 import registerTensorboardProxy, {
   buildTensorboardProxyTarget,
   buildTensorboardProxyUpstreamPath,
@@ -28,7 +29,15 @@ import registerTensorboardProxy, {
 const TENSORBOARD_PROXY_PREFIX = '/apps/tensorboard/proxy/';
 const TENSORBOARD_PROXY_SIGNING_SECRET = 'tensorboard-proxy-test-secret';
 
+vi.mock('../k8s-helper.js', () => ({
+  viewerExists: vi.fn(async () => true),
+}));
+
 describe('tensorboard-proxy', () => {
+  beforeEach(() => {
+    vi.mocked(k8sHelper.viewerExists).mockResolvedValue(true);
+  });
+
   it('creates scoped proxy paths that round-trip through the parser', () => {
     const proxyPath = createTensorboardProxyPath(
       'test-ns',
@@ -201,5 +210,29 @@ describe('tensorboard-proxy', () => {
         url: expect.stringContaining('/pipeline/apps/tensorboard/proxy/'),
       }),
     );
+  });
+
+  it('rejects proxy tokens for viewers that do not exist', async () => {
+    const app = express();
+    const authorizeFn = vi.fn(async () => undefined);
+    vi.mocked(k8sHelper.viewerExists).mockResolvedValue(false);
+    const proxyPath = createTensorboardProxyPath(
+      'test-ns',
+      'viewer-abcdefg',
+      TENSORBOARD_PROXY_SIGNING_SECRET,
+    );
+
+    registerTensorboardProxy(
+      app,
+      '/pipeline',
+      {
+        clusterDomain: '.svc.cluster.local',
+        proxySigningSecret: TENSORBOARD_PROXY_SIGNING_SECRET,
+        tfImageName: 'tensorflow/tensorflow',
+      },
+      authorizeFn,
+    );
+
+    await requests(app).get(`/${proxyPath}`).expect(404, 'TensorBoard viewer not found');
   });
 });

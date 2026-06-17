@@ -60,6 +60,11 @@ spec:
               secretKeyRef:
                 name: mlpipeline-minio-artifact
                 key: secretkey
+          - name: TENSORBOARD_PROXY_SIGNING_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: ml-pipeline-ui-tensorboard-proxy
+                key: signing-secret
           - name: ALLOW_CUSTOM_VISUALIZATIONS
             value: "true"
           - name: FRONTEND_SERVER_NAMESPACE

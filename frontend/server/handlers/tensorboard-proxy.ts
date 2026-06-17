@@ -23,6 +23,7 @@ import {
   AuthorizeRequestResources,
   AuthorizeRequestVerb,
 } from '../src/generated/apis/auth/index.js';
+import * as k8sHelper from '../k8s-helper.js';
 import { isAllowedResourceName } from '../utils.js';
 
 const DEFAULT_CLUSTER_DOMAIN = '.svc.cluster.local';
@@ -324,6 +325,12 @@ export default function registerTensorboardProxy(
       );
       if (authError) {
         res.status(403).send('Access denied to namespace');
+        return;
+      }
+
+      const viewerExists = await k8sHelper.viewerExists(payload.namespace, payload.viewerName);
+      if (!viewerExists) {
+        res.status(404).send('TensorBoard viewer not found');
         return;
       }
 
