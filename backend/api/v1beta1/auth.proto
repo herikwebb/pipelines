@@ -72,6 +72,7 @@ message AuthorizeRequest {
   enum Resources {
     UNASSIGNED_RESOURCES = 0;
     VIEWERS = 1;
+    RUNS = 2;
   }
   // Type of verbs that act on the resources.
   enum Verb {
@@ -79,6 +80,7 @@ message AuthorizeRequest {
     CREATE = 1;
     GET = 2;
     DELETE = 3;
+    READ_ARTIFACT = 4;
   }
   string namespace = 1;    // Namespace the resource belongs to.
   Resources resources = 2; // Resource type asking for authorization.

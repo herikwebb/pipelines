@@ -54,7 +54,8 @@
             "type": "string",
             "enum": [
               "UNASSIGNED_RESOURCES",
-              "VIEWERS"
+              "VIEWERS",
+              "RUNS"
             ],
             "default": "UNASSIGNED_RESOURCES"
           },
@@ -68,7 +69,8 @@
               "UNASSIGNED_VERB",
               "CREATE",
               "GET",
-              "DELETE"
+              "DELETE",
+              "READ_ARTIFACT"
             ],
             "default": "UNASSIGNED_VERB"
           }
@@ -84,7 +86,8 @@
       "type": "string",
       "enum": [
         "UNASSIGNED_RESOURCES",
-        "VIEWERS"
+        "VIEWERS",
+        "RUNS"
       ],
       "default": "UNASSIGNED_RESOURCES",
       "description": "Type of resources in pipelines system."
@@ -95,7 +98,8 @@
         "UNASSIGNED_VERB",
         "CREATE",
         "GET",
-        "DELETE"
+        "DELETE",
+        "READ_ARTIFACT"
       ],
       "default": "UNASSIGNED_VERB",
       "description": "Type of verbs that act on the resources."

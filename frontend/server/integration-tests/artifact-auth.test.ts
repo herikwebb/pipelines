@@ -194,7 +194,7 @@ describe('/artifacts authorization', () => {
         url: '/apis/v1beta1/auth',
         json: () =>
           Promise.resolve({
-            error: 'User is not authorized to GET VIEWERS in namespace other-namespace',
+            error: 'User is not authorized to READ_ARTIFACT RUNS in namespace other-namespace',
             details: {},
           }),
         text: () => Promise.resolve('User is not authorized'),
@@ -409,7 +409,7 @@ describe('/artifacts authorization', () => {
         url: '/apis/v1beta1/auth',
         json: () =>
           Promise.resolve({
-            error: 'User is not authorized to GET VIEWERS in namespace unauthorized-ns',
+            error: 'User is not authorized to READ_ARTIFACT RUNS in namespace unauthorized-ns',
             details: {},
           }),
         text: () => Promise.resolve('User is not authorized'),

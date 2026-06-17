@@ -28,14 +28,6 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 )
 
-var rbacResourceTypeToGroup = map[string]string{
-	common.RbacResourceTypePipelines:      common.RbacPipelinesGroup,
-	common.RbacResourceTypeExperiments:    common.RbacPipelinesGroup,
-	common.RbacResourceTypeRuns:           common.RbacPipelinesGroup,
-	common.RbacResourceTypeJobs:           common.RbacPipelinesGroup,
-	common.RbacResourceTypeViewers:        common.RbacKubeflowGroup,
-	common.RbacResourceTypeVisualizations: common.RbacPipelinesGroup,
-}
 
 type AuthServer struct {
 	resourceManager *resource.ResourceManager
@@ -50,17 +42,9 @@ func (s *AuthServer) AuthorizeV1(ctx context.Context, request *api.AuthorizeRequ
 		return nil, util.Wrap(err, "Authorize request is not valid")
 	}
 
-	namespace := strings.ToLower(request.GetNamespace())
-	verb := strings.ToLower(request.GetVerb().String())
-	resource := strings.ToLower(request.GetResources().String())
-	resourceAttributes := &authorizationv1.ResourceAttributes{
-		Namespace:   namespace,
-		Verb:        verb,
-		Group:       rbacResourceTypeToGroup[resource],
-		Version:     common.RbacPipelinesVersion,
-		Resource:    resource,
-		Subresource: "",
-		Name:        "",
+	resourceAttributes, err := resourceAttributesFromAuthorizeRequest(request)
+	if err != nil {
+		return nil, util.Wrap(err, "Authorize request is not valid")
 	}
 	err = s.resourceManager.IsAuthorized(ctx, resourceAttributes)
 	if err != nil {
@@ -68,6 +52,37 @@ func (s *AuthServer) AuthorizeV1(ctx context.Context, request *api.AuthorizeRequ
 	}
 
 	return &emptypb.Empty{}, nil
+}
+
+func resourceAttributesFromAuthorizeRequest(request *api.AuthorizeRequest) (*authorizationv1.ResourceAttributes, error) {
+	namespace := strings.ToLower(request.GetNamespace())
+
+	switch request.GetResources() {
+	case api.AuthorizeRequest_RUNS:
+		if request.GetVerb() != api.AuthorizeRequest_READ_ARTIFACT {
+			return nil, util.NewInvalidInputError(
+				"RUNS resources require READ_ARTIFACT verb",
+			)
+		}
+		return &authorizationv1.ResourceAttributes{
+			Namespace: namespace,
+			Verb:      common.RbacResourceVerbReadArtifact,
+			Group:     common.RbacPipelinesGroup,
+			Version:   common.RbacPipelinesVersion,
+			Resource:  common.RbacResourceTypeRuns,
+		}, nil
+	case api.AuthorizeRequest_VIEWERS:
+		verb := strings.ToLower(request.GetVerb().String())
+		return &authorizationv1.ResourceAttributes{
+			Namespace: namespace,
+			Verb:      verb,
+			Group:     common.RbacKubeflowGroup,
+			Version:   common.RbacPipelinesVersion,
+			Resource:  common.RbacResourceTypeViewers,
+		}, nil
+	default:
+		return nil, util.NewInvalidInputError("Unsupported resource type")
+	}
 }
 
 func ValidateAuthorizeRequest(request *api.AuthorizeRequest) error {

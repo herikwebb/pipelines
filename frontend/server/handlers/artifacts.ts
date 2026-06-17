@@ -169,8 +169,8 @@ export function getArtifactsAuthMiddleware(
 
     const authError = await authorizeFn(
       {
-        verb: AuthorizeRequestVerb.GET,
-        resources: AuthorizeRequestResources.VIEWERS,
+        verb: AuthorizeRequestVerb.READ_ARTIFACT,
+        resources: AuthorizeRequestResources.RUNS,
         namespace: namespace,
       },
       request,

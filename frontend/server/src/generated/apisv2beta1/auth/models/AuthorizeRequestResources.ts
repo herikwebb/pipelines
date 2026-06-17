@@ -19,6 +19,7 @@
 export const AuthorizeRequestResources = {
   UNASSIGNED_RESOURCES: 'UNASSIGNED_RESOURCES',
   VIEWERS: 'VIEWERS',
+  RUNS: 'RUNS',
 } as const;
 export type AuthorizeRequestResources =
   (typeof AuthorizeRequestResources)[keyof typeof AuthorizeRequestResources];

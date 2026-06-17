@@ -44,6 +44,7 @@ type AuthorizeRequest_Resources int32
 const (
 	AuthorizeRequest_UNASSIGNED_RESOURCES AuthorizeRequest_Resources = 0
 	AuthorizeRequest_VIEWERS              AuthorizeRequest_Resources = 1
+	AuthorizeRequest_RUNS                 AuthorizeRequest_Resources = 2
 )
 
 // Enum value maps for AuthorizeRequest_Resources.
@@ -51,10 +52,12 @@ var (
 	AuthorizeRequest_Resources_name = map[int32]string{
 		0: "UNASSIGNED_RESOURCES",
 		1: "VIEWERS",
+		2: "RUNS",
 	}
 	AuthorizeRequest_Resources_value = map[string]int32{
 		"UNASSIGNED_RESOURCES": 0,
 		"VIEWERS":              1,
+		"RUNS":                 2,
 	}
 )
 
@@ -93,6 +96,7 @@ const (
 	AuthorizeRequest_CREATE          AuthorizeRequest_Verb = 1
 	AuthorizeRequest_GET             AuthorizeRequest_Verb = 2
 	AuthorizeRequest_DELETE          AuthorizeRequest_Verb = 3
+	AuthorizeRequest_READ_ARTIFACT   AuthorizeRequest_Verb = 4
 )
 
 // Enum value maps for AuthorizeRequest_Verb.
@@ -102,12 +106,14 @@ var (
 		1: "CREATE",
 		2: "GET",
 		3: "DELETE",
+		4: "READ_ARTIFACT",
 	}
 	AuthorizeRequest_Verb_value = map[string]int32{
 		"UNASSIGNED_VERB": 0,
 		"CREATE":          1,
 		"GET":             2,
 		"DELETE":          3,
+		"READ_ARTIFACT":   4,
 	}
 )
 

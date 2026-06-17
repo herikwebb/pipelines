@@ -144,6 +144,27 @@ func TestAuthorizeRequest_EmptyUserIdPrefix(t *testing.T) {
 	assert.Nil(t, err)
 }
 
+func TestAuthorizeRequest_ReadArtifactAuthorized(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	clients, manager, _ := initWithExperiment(t)
+	defer clients.Close()
+	authServer := AuthServer{resourceManager: manager}
+
+	md := metadata.New(map[string]string{common.GoogleIAPUserIdentityHeader: "accounts.google.com:user@google.com"})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	request := &api.AuthorizeRequest{
+		Namespace: "ns1",
+		Resources: api.AuthorizeRequest_RUNS,
+		Verb:      api.AuthorizeRequest_READ_ARTIFACT,
+	}
+
+	_, err := authServer.AuthorizeV1(ctx, request)
+	assert.Nil(t, err)
+}
+
 func TestAuthorizeRequest_Unauthenticated(t *testing.T) {
 	viper.Set(common.MultiUserMode, "true")
 	defer viper.Set(common.MultiUserMode, "false")

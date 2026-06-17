@@ -21,6 +21,7 @@ export const AuthorizeRequestVerb = {
   CREATE: 'CREATE',
   GET: 'GET',
   DELETE: 'DELETE',
+  READ_ARTIFACT: 'READ_ARTIFACT',
 } as const;
 export type AuthorizeRequestVerb = (typeof AuthorizeRequestVerb)[keyof typeof AuthorizeRequestVerb];
 

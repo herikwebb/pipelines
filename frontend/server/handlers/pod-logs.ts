@@ -101,8 +101,8 @@ export function getPodLogsHandler(
       try {
         const authError = await authorizeFn(
           {
-            verb: AuthorizeRequestVerb.GET,
-            resources: AuthorizeRequestResources.VIEWERS,
+            verb: AuthorizeRequestVerb.READ_ARTIFACT,
+            resources: AuthorizeRequestResources.RUNS,
             namespace: podNamespace,
           },
           req,

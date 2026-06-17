@@ -40,8 +40,8 @@ export function getPodInfoHandlers(authorizeFn: AuthorizeFn) {
     try {
       const authError = await authorizeFn(
         {
-          verb: AuthorizeRequestVerb.GET,
-          resources: AuthorizeRequestResources.VIEWERS,
+          verb: AuthorizeRequestVerb.READ_ARTIFACT,
+          resources: AuthorizeRequestResources.RUNS,
           namespace: podnamespace as string,
         },
         req,
@@ -84,8 +84,8 @@ export function getPodInfoHandlers(authorizeFn: AuthorizeFn) {
     try {
       const authError = await authorizeFn(
         {
-          verb: AuthorizeRequestVerb.GET,
-          resources: AuthorizeRequestResources.VIEWERS,
+          verb: AuthorizeRequestVerb.READ_ARTIFACT,
+          resources: AuthorizeRequestResources.RUNS,
           namespace: podnamespace as string,
         },
         req,

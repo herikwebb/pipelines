@@ -89,6 +89,7 @@ export class AuthServiceApi extends runtime.BaseAPI {
 export const AuthorizeResourcesEnum = {
   UNASSIGNED_RESOURCES: 'UNASSIGNED_RESOURCES',
   VIEWERS: 'VIEWERS',
+  RUNS: 'RUNS',
 } as const;
 export type AuthorizeResourcesEnum =
   (typeof AuthorizeResourcesEnum)[keyof typeof AuthorizeResourcesEnum];
