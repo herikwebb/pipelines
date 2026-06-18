@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import importlib
-from typing import Text
 import unittest
+import unittest.mock
+from typing import Text
 import tornado.testing
 import tornado.web
 
@@ -76,6 +77,20 @@ class TestServerEndpoints(tornado.testing.AsyncHTTPTestCase):
             method="POST",
             body='type=custom')
         self.assertEqual(200, response.code)
+
+    def test_create_visualization_fails_when_custom_type_is_disabled(self):
+        with unittest.mock.patch.dict(
+            "os.environ", {"ALLOW_CUSTOM_VISUALIZATIONS": "false"}, clear=False
+        ):
+            response = self.fetch(
+                "/",
+                method="POST",
+                body='type=custom&arguments={"code":["print(1)"]}')
+        self.assertEqual(400, response.code)
+        self.assertEqual(
+            wrap_error_in_html("400: Custom visualizations are disabled."),
+            response.body,
+        )
 
     def test_create_visualization_fails_when_invalid_json_is_provided(self):
         response = self.fetch(

@@ -314,6 +314,11 @@ func TestConfigWrapperDefaults(t *testing.T) {
 			expected: false,
 		},
 		{
+			name:     "IsCustomVisualizationsAllowed defaults to true",
+			getter:   func() interface{} { return IsCustomVisualizationsAllowed() },
+			expected: true,
+		},
+		{
 			name:     "IsMultiUserMode defaults to false",
 			getter:   func() interface{} { return IsMultiUserMode() },
 			expected: false,
@@ -421,6 +426,13 @@ func TestConfigWrapperCustomValues(t *testing.T) {
 			envValue: "true",
 			getter:   func() interface{} { return IsNamespaceRequiredForPipelines() },
 			expected: true,
+		},
+		{
+			name:     "IsCustomVisualizationsAllowed with custom false",
+			envKey:   AllowCustomVisualizations,
+			envValue: "false",
+			getter:   func() interface{} { return IsCustomVisualizationsAllowed() },
+			expected: false,
 		},
 		{
 			name:     "IsMultiUserMode with custom true",

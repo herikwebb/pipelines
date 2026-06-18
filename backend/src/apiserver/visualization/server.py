@@ -57,6 +57,12 @@ class VisualizationHandler(tornado.web.RequestHandler):
         except tornado.web.MissingArgumentError:
             raise Exception("No type provided.")
 
+        visualization_type = arguments["type"]
+        if visualization_type == "custom" and os.getenv(
+            "ALLOW_CUSTOM_VISUALIZATIONS", "true"
+        ).lower() not in ("1", "true", "yes"):
+            raise Exception("Custom visualizations are disabled.")
+
         try:
             arguments["arguments"] = self.get_body_argument("arguments")
         except tornado.web.MissingArgumentError:

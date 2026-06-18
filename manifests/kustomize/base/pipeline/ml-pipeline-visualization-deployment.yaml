@@ -26,6 +26,9 @@ spec:
         ports:
         - name: http
           containerPort: 8888
+        env:
+        - name: ALLOW_CUSTOM_VISUALIZATIONS
+          value: "true"
         readinessProbe:
           httpGet:
               path: /

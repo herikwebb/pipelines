@@ -257,6 +257,8 @@ spec:
                   name: pipeline-install-config
                   key: V1_ALLOWED_NAMESPACES
                   optional: true
+            - name: ALLOW_CUSTOM_VISUALIZATIONS
+              value: "true"
           image: ghcr.io/kubeflow/kfp-api-server:dummy
           imagePullPolicy: IfNotPresent
           name: ml-pipeline-api-server

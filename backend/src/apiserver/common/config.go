@@ -57,6 +57,7 @@ const (
 	PluginMaxPayloadBytes                   string = "PLUGIN_MAX_PAYLOAD_BYTES"
 	PluginMaxTotalPayloadBytes              string = "PLUGIN_MAX_TOTAL_PAYLOAD_BYTES"
 	PluginMaxNestingDepth                   string = "PLUGIN_MAX_NESTING_DEPTH"
+	AllowCustomVisualizations               string = "ALLOW_CUSTOM_VISUALIZATIONS"
 )
 
 type PluginLimitsConfig struct {
@@ -72,6 +73,10 @@ func IsPipelineVersionUpdatedByDefault() bool {
 
 func IsNamespaceRequiredForPipelines() bool {
 	return GetBoolConfigWithDefault(RequireNamespaceForPipelines, false)
+}
+
+func IsCustomVisualizationsAllowed() bool {
+	return GetBoolConfigWithDefault(AllowCustomVisualizations, true)
 }
 
 func GetStringConfig(configName string) string {
