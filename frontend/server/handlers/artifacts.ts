@@ -86,6 +86,31 @@ export interface GCSProviderInfo {
   };
 }
 
+function usesSecretBackedProviderInfo(providerInfoString: string): boolean {
+  const providerInfo =
+    parseJSONString<S3ProviderInfo>(providerInfoString) ||
+    parseJSONString<GCSProviderInfo>(providerInfoString);
+  return providerInfo?.Params?.fromEnv === 'false';
+}
+
+/**
+ * Secret-backed providerInfo lets the server read Kubernetes Secrets via
+ * getK8sSecret(). That is only safe after multi-user auth has validated the
+ * caller; in standalone mode it enables arbitrary secret exfiltration.
+ */
+export function rejectSecretBackedProviderInfoWithoutAuth(
+  providerInfoString: string,
+  authEnabled: boolean,
+): string | undefined {
+  if (!providerInfoString || authEnabled) {
+    return undefined;
+  }
+  if (usesSecretBackedProviderInfo(providerInfoString)) {
+    return 'Secret-backed providerInfo is not allowed when authorization is disabled';
+  }
+  return undefined;
+}
+
 /**
  * Returns an authorization middleware for artifact endpoints.
  * This middleware handles 3 modes:
@@ -247,6 +272,17 @@ export function getArtifactsHandler({
     }
     if (key.length > 1024) {
       res.status(500).send('Object key too long');
+      return;
+    }
+    const providerInfoError = rejectSecretBackedProviderInfoWithoutAuth(
+      providerInfo,
+      options.auth.enabled,
+    );
+    if (providerInfoError) {
+      console.warn(
+        `[SECURITY] Rejected secret-backed providerInfo without authorization. Path: ${req.originalUrl}`,
+      );
+      res.status(403).send(providerInfoError);
       return;
     }
     console.log(`Getting storage artifact at: ${source}: ${bucket}/${key}`);

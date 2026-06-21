@@ -143,7 +143,7 @@ describe('/artifacts', () => {
       expect(mockedMinioClient).toBeCalledTimes(1);
     });
 
-    it('responds with artifact if source is AWS S3, and creds are sourced from Provider Configs', async () => {
+    it('rejects secret-backed providerInfo when authorization is disabled (AWS S3)', async () => {
       const mockedMinioClient: Mock = minio.Client as any;
       const mockedGetK8sSecret: Mock = getK8sSecret as any;
       mockedGetK8sSecret.mockResolvedValue('someSecret');
@@ -153,13 +153,9 @@ describe('/artifacts', () => {
       const providerInfo = {
         Params: {
           accessKeyKey: 'someSecret',
-          // this not set and default is used (tls=true)
-          // since aws connections are always tls secured
           disableSSL: 'false',
           endpoint: 's3.amazonaws.com',
           fromEnv: 'false',
-          // this not set and default is used
-          // since aws connections always have the same port
           port: '0001',
           region: 'us-east-2',
           secretKeyKey: 'someSecret',
@@ -168,31 +164,22 @@ describe('/artifacts', () => {
         Provider: 's3',
       };
       const namespace = 'test';
-      await request
+      const response = await request
         .get(
           `/artifacts/get?source=s3&bucket=ml-pipeline&key=hello%2Fworld.txt&namespace=${namespace}&providerInfo=${JSON.stringify(
             providerInfo,
           )}`,
         )
-        .expect(200, artifactContent);
-      expect(mockedMinioClient).toBeCalledWith({
-        accessKey: 'someSecret',
-        endPoint: 's3.amazonaws.com',
-        port: undefined,
-        region: 'us-east-2',
-        secretKey: 'someSecret',
-        useSSL: undefined,
-      });
-      expect(mockedMinioClient).toBeCalledTimes(1);
-      expect(mockedGetK8sSecret).toBeCalledWith('aws-s3-creds', 'someSecret', `${namespace}`);
-      expect(mockedGetK8sSecret).toBeCalledTimes(2);
+        .expect(403);
+      expect(response.text).toContain('Secret-backed providerInfo is not allowed');
+      expect(mockedMinioClient).not.toBeCalled();
+      expect(mockedGetK8sSecret).not.toBeCalled();
     });
 
-    it('responds with artifact if source is AWS S3, and creds are sourced from Provider Configs, and uses default kubeflow namespace when no namespace is provided', async () => {
+    it('rejects secret-backed providerInfo when authorization is disabled (AWS S3, default namespace)', async () => {
       const mockedGetK8sSecret: Mock = getK8sSecret as any;
       mockedGetK8sSecret.mockResolvedValue('somevalue');
       const mockedMinioClient: Mock = minio.Client as any;
-      const namespace = 'kubeflow';
       const configs = loadConfigs(argv, {});
       app = new UIServer(configs);
       const request = requests(app.app);
@@ -208,44 +195,23 @@ describe('/artifacts', () => {
         },
         Provider: 's3',
       };
-      await request
+      const response = await request
         .get(
           `/artifacts/get?source=s3&bucket=ml-pipeline&key=hello%2Fworld.txt&providerInfo=${JSON.stringify(
             providerInfo,
           )}`,
         )
-        .expect(200, artifactContent);
-      expect(mockedMinioClient).toBeCalledWith({
-        accessKey: 'somevalue',
-        endPoint: 's3.amazonaws.com',
-        port: undefined,
-        region: 'us-east-2',
-        secretKey: 'somevalue',
-        useSSL: undefined,
-      });
-      expect(mockedMinioClient).toBeCalledTimes(1);
-      expect(mockedGetK8sSecret).toBeCalledTimes(2);
-      expect(mockedGetK8sSecret).toHaveBeenNthCalledWith(
-        1,
-        'aws-s3-creds',
-        'AWS_ACCESS_KEY_ID',
-        `${namespace}`,
-      );
-      expect(mockedGetK8sSecret).toHaveBeenNthCalledWith(
-        2,
-        'aws-s3-creds',
-        'AWS_SECRET_ACCESS_KEY',
-        `${namespace}`,
-      );
-      expect(mockedGetK8sSecret).toBeCalledTimes(2);
+        .expect(403);
+      expect(response.text).toContain('Secret-backed providerInfo is not allowed');
+      expect(mockedMinioClient).not.toBeCalled();
+      expect(mockedGetK8sSecret).not.toBeCalled();
     });
 
-    it('responds with artifact if source is AWS S3, and creds are sourced from Provider Configs, and uses default namespace when no namespace is provided, as specified in ENV', async () => {
+    it('rejects secret-backed providerInfo when authorization is disabled (AWS S3, FRONTEND_SERVER_NAMESPACE)', async () => {
       const mockedGetK8sSecret: Mock = getK8sSecret as any;
       mockedGetK8sSecret.mockResolvedValue('somevalue');
       const mockedMinioClient: Mock = minio.Client as any;
-      const namespace = 'notkubeflow';
-      const configs = loadConfigs(argv, { FRONTEND_SERVER_NAMESPACE: namespace });
+      const configs = loadConfigs(argv, { FRONTEND_SERVER_NAMESPACE: 'notkubeflow' });
       app = new UIServer(configs);
       const request = requests(app.app);
       const providerInfo = {
@@ -260,39 +226,19 @@ describe('/artifacts', () => {
         },
         Provider: 's3',
       };
-      await request
+      const response = await request
         .get(
           `/artifacts/get?source=s3&bucket=ml-pipeline&key=hello%2Fworld.txt&providerInfo=${JSON.stringify(
             providerInfo,
           )}`,
         )
-        .expect(200, artifactContent);
-      expect(mockedMinioClient).toBeCalledWith({
-        accessKey: 'somevalue',
-        endPoint: 's3.amazonaws.com',
-        port: undefined,
-        region: 'us-east-2',
-        secretKey: 'somevalue',
-        useSSL: undefined,
-      });
-      expect(mockedMinioClient).toBeCalledTimes(1);
-      expect(mockedGetK8sSecret).toBeCalledTimes(2);
-      expect(mockedGetK8sSecret).toHaveBeenNthCalledWith(
-        1,
-        'aws-s3-creds',
-        'AWS_ACCESS_KEY_ID',
-        `${namespace}`,
-      );
-      expect(mockedGetK8sSecret).toHaveBeenNthCalledWith(
-        2,
-        'aws-s3-creds',
-        'AWS_SECRET_ACCESS_KEY',
-        `${namespace}`,
-      );
-      expect(mockedGetK8sSecret).toBeCalledTimes(2);
+        .expect(403);
+      expect(response.text).toContain('Secret-backed providerInfo is not allowed');
+      expect(mockedMinioClient).not.toBeCalled();
+      expect(mockedGetK8sSecret).not.toBeCalled();
     });
 
-    it('responds with artifact if source is s3-compatible, and creds are sourced from Provider Configs', async () => {
+    it('rejects secret-backed providerInfo when authorization is disabled (s3-compatible)', async () => {
       const mockedMinioClient: Mock = minio.Client as any;
       const mockedGetK8sSecret: Mock = getK8sSecret as any;
       mockedGetK8sSecret.mockResolvedValue('someSecret');
@@ -312,27 +258,19 @@ describe('/artifacts', () => {
         Provider: 's3',
       };
       const namespace = 'test';
-      await request
+      const response = await request
         .get(
           `/artifacts/get?source=s3&bucket=ml-pipeline&key=hello%2Fworld.txt&namespace=${namespace}&providerInfo=${JSON.stringify(
             providerInfo,
           )}`,
         )
-        .expect(200, artifactContent);
-      expect(mockedMinioClient).toBeCalledWith({
-        accessKey: 'someSecret',
-        endPoint: 'mys3.com',
-        port: undefined,
-        region: 'auto',
-        secretKey: 'someSecret',
-        useSSL: true,
-      });
-      expect(mockedMinioClient).toBeCalledTimes(1);
-      expect(mockedGetK8sSecret).toBeCalledWith('my-secret', 'someSecret', `${namespace}`);
-      expect(mockedGetK8sSecret).toBeCalledTimes(2);
+        .expect(403);
+      expect(response.text).toContain('Secret-backed providerInfo is not allowed');
+      expect(mockedMinioClient).not.toBeCalled();
+      expect(mockedGetK8sSecret).not.toBeCalled();
     });
 
-    it('responds with artifact if source is s3-compatible, and creds are sourced from Provider Configs, with endpoint port', async () => {
+    it('rejects secret-backed providerInfo when authorization is disabled (s3-compatible with endpoint port)', async () => {
       const mockedMinioClient: Mock = minio.Client as any;
       const mockedGetK8sSecret: Mock = getK8sSecret as any;
       mockedGetK8sSecret.mockResolvedValue('someSecret');
@@ -352,40 +290,24 @@ describe('/artifacts', () => {
         Provider: 's3',
       };
       const namespace = 'test';
-      await request
+      const response = await request
         .get(
           `/artifacts/get?source=s3&bucket=ml-pipeline&key=hello%2Fworld.txt&namespace=${namespace}&providerInfo=${JSON.stringify(
             providerInfo,
           )}`,
         )
-        .expect(200, artifactContent);
-      expect(mockedMinioClient).toBeCalledWith({
-        accessKey: 'someSecret',
-        endPoint: 'mys3.ns.svc.cluster.local',
-        port: 1234,
-        region: 'auto',
-        secretKey: 'someSecret',
-        useSSL: true,
-      });
-      expect(mockedMinioClient).toBeCalledTimes(1);
-      expect(mockedGetK8sSecret).toBeCalledWith('my-secret', 'someSecret', `${namespace}`);
-      expect(mockedGetK8sSecret).toBeCalledTimes(2);
+        .expect(403);
+      expect(response.text).toContain('Secret-backed providerInfo is not allowed');
+      expect(mockedMinioClient).not.toBeCalled();
+      expect(mockedGetK8sSecret).not.toBeCalled();
     });
 
-    it('responds with artifact if source is gcs, and creds are sourced from Provider Configs', async () => {
-      const artifactContent = 'hello world';
+    it('rejects secret-backed providerInfo when authorization is disabled (gcs)', async () => {
       const mockedGetGCSClient: Mock = getGCSClient as any;
       const mockedListGCSObjectNames: Mock = listGCSObjectNames as any;
       const mockedDownloadGCSObjectStream: Mock = downloadGCSObjectStream as any;
       const mockedGetK8sSecret: Mock = getK8sSecret as any;
-      const client = { request: vi.fn() };
       mockedGetK8sSecret.mockResolvedValue('{"private_key":"testkey","client_email":"testemail"}');
-      const stream = new PassThrough();
-      stream.write(artifactContent);
-      stream.end();
-      mockedGetGCSClient.mockResolvedValueOnce(client);
-      mockedListGCSObjectNames.mockResolvedValueOnce(['hello/world.txt']);
-      mockedDownloadGCSObjectStream.mockResolvedValueOnce(stream);
       const configs = loadConfigs(argv, {});
       app = new UIServer(configs);
       const request = requests(app.app);
@@ -398,38 +320,18 @@ describe('/artifacts', () => {
         Provider: 'gs',
       };
       const namespace = 'test';
-      await request
+      const response = await request
         .get(
           `/artifacts/get?source=gcs&bucket=ml-pipeline&key=hello%2Fworld.txt&namespace=${namespace}&providerInfo=${JSON.stringify(
             providerInfo,
           )}`,
         )
-        .expect(200, artifactContent + '\n');
-      const expectedArg = {
-        bucket: 'ml-pipeline',
-        client,
-        credentials: {
-          client_email: 'testemail',
-          private_key: 'testkey',
-        },
-        prefix: 'hello/world.txt',
-      };
-      expect(mockedListGCSObjectNames).toBeCalledWith(expectedArg);
-      expect(mockedDownloadGCSObjectStream).toBeCalledWith({
-        bucket: 'ml-pipeline',
-        client,
-        credentials: {
-          client_email: 'testemail',
-          private_key: 'testkey',
-        },
-        objectName: 'hello/world.txt',
-      });
-      expect(mockedGetGCSClient).toBeCalledWith({
-        client_email: 'testemail',
-        private_key: 'testkey',
-      });
-      expect(mockedGetK8sSecret).toBeCalledWith('someSecret', 'somekey', `${namespace}`);
-      expect(mockedGetK8sSecret).toBeCalledTimes(1);
+        .expect(403);
+      expect(response.text).toContain('Secret-backed providerInfo is not allowed');
+      expect(mockedGetGCSClient).not.toBeCalled();
+      expect(mockedListGCSObjectNames).not.toBeCalled();
+      expect(mockedDownloadGCSObjectStream).not.toBeCalled();
+      expect(mockedGetK8sSecret).not.toBeCalled();
     });
 
     it('responds with partial s3 artifact if peek=5 flag is set', async () => {
