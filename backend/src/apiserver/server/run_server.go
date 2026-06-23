@@ -366,20 +366,30 @@ func (s *RunServerV1) DeleteRunV1(ctx context.Context, request *apiv1beta1.Delet
 	return &emptypb.Empty{}, nil
 }
 
-// Reports run metrics.
-// Applies common logic on v1beta1 and v2beta1 API.
-func (s *BaseRunServer) reportRunMetrics(ctx context.Context, metrics []*model.RunMetric, runId string) ([]map[string]string, error) {
+// authorizeReportRunMetrics checks that the caller may report metrics for runId.
+// In multi-user mode, authorization and not-found failures both return NotFound
+// to prevent cross-tenant run UUID enumeration.
+func (s *BaseRunServer) authorizeReportRunMetrics(ctx context.Context, runId string) error {
 	err := s.canAccessRun(ctx, runId, &authorizationv1.ResourceAttributes{Verb: common.RbacResourceVerbReportMetrics})
 	if err != nil {
-		return nil, util.Wrap(err, "Failed to authorize the request")
+		if common.IsMultiUserMode() {
+			return util.NewResourceNotFoundError("Run %s not found", runId)
+		}
+		return util.Wrap(err, "Failed to authorize the request")
 	}
 	// Verify that the run exists for single user mode.
 	// Multi-user model will verify this when checking authorization above.
 	if !common.IsMultiUserMode() {
 		if _, err := s.resourceManager.GetRun(runId); err != nil {
-			return nil, util.Wrap(err, "Failed to fetch the requested run")
+			return util.NewResourceNotFoundError("Run %s not found", runId)
 		}
 	}
+	return nil
+}
+
+// Reports run metrics.
+// Applies common logic on v1beta1 and v2beta1 API.
+func (s *BaseRunServer) reportRunMetrics(ctx context.Context, metrics []*model.RunMetric, runId string) ([]map[string]string, error) {
 	results := make([]map[string]string, 0)
 	for _, metric := range metrics {
 		temp := map[string]string{"Name": metric.Name, "NodeId": metric.NodeID, "ErrorCode": "", "ErrorMessage": ""}
@@ -388,20 +398,20 @@ func (s *BaseRunServer) reportRunMetrics(ctx context.Context, metrics []*model.R
 			results = append(results, temp)
 			continue
 		}
-		err = s.resourceManager.ReportMetric(metric)
-		if err == nil {
+		reportErr := s.resourceManager.ReportMetric(metric)
+		if reportErr == nil {
 			temp["ErrorCode"] = "ok"
 			results = append(results, temp)
 			continue
 		}
-		err, ok := err.(*util.UserError)
+		userErr, ok := reportErr.(*util.UserError)
 		if !ok {
 			temp["ErrorCode"] = "internal"
 			results = append(results, temp)
 			continue
 		}
-		temp["ErrorMessage"] = err.ExternalMessage()
-		switch err.ExternalStatusCode() {
+		temp["ErrorMessage"] = userErr.ExternalMessage()
+		switch userErr.ExternalStatusCode() {
 		case codes.AlreadyExists:
 			temp["ErrorCode"] = "duplicate"
 		case codes.InvalidArgument:
@@ -410,7 +420,7 @@ func (s *BaseRunServer) reportRunMetrics(ctx context.Context, metrics []*model.R
 			temp["ErrorCode"] = "internal"
 		}
 		if temp["ErrorCode"] == "internal" {
-			glog.Errorf("Internal error '%v' when reporting metric '%s/%s'", err, metric.NodeID, metric.Name)
+			glog.Errorf("Internal error '%v' when reporting metric '%s/%s'", reportErr, metric.NodeID, metric.Name)
 		}
 		results = append(results, temp)
 	}
@@ -424,12 +434,8 @@ func (s *RunServerV1) ReportRunMetricsV1(ctx context.Context, request *apiv1beta
 		reportRunMetricsRequests.Inc()
 	}
 
-	if _, err := s.resourceManager.GetRun(request.GetRunId()); err != nil {
-		// Use the standard ResourceNotFoundError so that AssertUserError
-		// sees codes.NotFound and the right error message.
-		return nil, util.NewResourceNotFoundError(
-			"Run %s not found", request.GetRunId(),
-		)
+	if err := s.authorizeReportRunMetrics(ctx, request.GetRunId()); err != nil {
+		return nil, err
 	}
 
 	// Convert, validate, and report each metric in input order.

@@ -1285,11 +1285,7 @@ func TestReportRunMetricsV1_Unauthorized(t *testing.T) {
 		Metrics: []*apiv1beta1.RunMetric{metricV1},
 	})
 	assert.NotNil(t, err)
-	assert.Contains(
-		t,
-		err.Error(),
-		"PermissionDenied: User 'user@google.com' is not authorized",
-	)
+	AssertUserError(t, err, codes.NotFound)
 }
 
 func TestReportRunMetricsV1_PartialFailures(t *testing.T) {
