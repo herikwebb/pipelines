@@ -481,7 +481,6 @@ def server_factory(frontend_image,
                                         "s3:DeleteObject"
                                     ],
                                     "Resource": [
-                                        f"arn:aws:s3:::{S3_BUCKET_NAME}/artifacts/*",
                                         f"arn:aws:s3:::{S3_BUCKET_NAME}/private-artifacts/{namespace}/*",
                                         f"arn:aws:s3:::{S3_BUCKET_NAME}/private/{namespace}/*",
                                         f"arn:aws:s3:::{S3_BUCKET_NAME}/shared/*",
