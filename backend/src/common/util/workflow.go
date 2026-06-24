@@ -918,6 +918,23 @@ func (w *Workflow) HasNodes() bool {
 	return len(w.Status.Nodes) > 0
 }
 
+// AllowsLogAccessForNode returns true when nodeIdentifier matches a workflow node
+// ID, node name, or the Argo-derived pod name for that node.
+func (w *Workflow) AllowsLogAccessForNode(nodeIdentifier string) bool {
+	if w.Status.Nodes == nil {
+		return false
+	}
+	for _, node := range w.Status.Nodes {
+		if node.ID == nodeIdentifier || node.Name == nodeIdentifier {
+			return true
+		}
+		if RetrievePodName(*w.Workflow, node) == nodeIdentifier {
+			return true
+		}
+	}
+	return false
+}
+
 // implementation of ExecutionClientInterface
 type WorkflowClient struct {
 	client *argoclient.Clientset

@@ -1174,6 +1174,15 @@ func (r *ResourceManager) ReadLog(ctx context.Context, runId string, nodeId stri
 	if err != nil {
 		return util.NewBadRequestError(err, "Failed to read logs for run %v due to run fetching error", runId)
 	}
+	if run.WorkflowRuntimeManifest != "" {
+		execSpec, parseErr := util.NewExecutionSpecJSON(util.ArgoWorkflow, []byte(run.WorkflowRuntimeManifest))
+		if parseErr != nil {
+			return util.NewBadRequestError(parseErr, "Failed to read logs for run %v due to invalid workflow manifest", runId)
+		}
+		if !execSpec.ExecutionStatus().AllowsLogAccessForNode(nodeId) {
+			return util.NewInvalidInputError("node %s is not part of run %s", nodeId, runId)
+		}
+	}
 	// TODO(gkcalat): consider using run.Namespace after migration logic will be available.
 	namespace, err := r.getNamespaceFromRunId(runId)
 	if err != nil {

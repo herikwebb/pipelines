@@ -67,6 +67,9 @@ type ExecutionStatus interface {
 
 	// Any node status exists or not
 	HasNodes() bool
+	// AllowsLogAccessForNode returns true when nodeIdentifier matches a workflow
+	// node ID, node name, or the Argo-derived pod name for that node.
+	AllowsLogAccessForNode(nodeIdentifier string) bool
 	// Get node statuses, the NodeStatus data struct could be extended if needed
 	NodeStatuses() map[string]NodeStatus
 }

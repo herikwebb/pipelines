@@ -1072,6 +1072,26 @@ func TestWorkflow_HasNodes(t *testing.T) {
 	}
 }
 
+func TestWorkflow_AllowsLogAccessForNode(t *testing.T) {
+	workflow := NewWorkflow(&workflowapi.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-wf"},
+		Status: workflowapi.WorkflowStatus{
+			Nodes: map[string]workflowapi.NodeStatus{
+				"my-wf-node-abc123": {
+					ID:           "my-wf-node-abc123",
+					Name:         "my-wf.my-template",
+					TemplateName: "my-template",
+				},
+			},
+		},
+	})
+
+	assert.True(t, workflow.AllowsLogAccessForNode("my-wf-node-abc123"))
+	assert.True(t, workflow.AllowsLogAccessForNode("my-wf.my-template"))
+	assert.True(t, workflow.AllowsLogAccessForNode("my-wf-my-template-abc123"))
+	assert.False(t, workflow.AllowsLogAccessForNode("other-users-pod"))
+}
+
 func TestWorkflow_IsTerminating(t *testing.T) {
 	zero := int64(0)
 	nonZero := int64(100)
