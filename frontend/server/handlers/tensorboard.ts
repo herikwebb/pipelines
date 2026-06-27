@@ -21,6 +21,7 @@ import {
 import { parseError, isAllowedResourceName } from '../utils.js';
 import { AuthorizeFn } from '../helpers/auth.js';
 import { createTensorboardProxyPath } from './tensorboard-proxy.js';
+import { sanitizeViewerPodTemplateSpec } from '../viewer-pod-template.js';
 
 export const getTensorboardHandlers = (
   tensorboardConfig: ViewerTensorboardConfig,
@@ -114,11 +115,20 @@ export const getTensorboardHandlers = (
       res.status(400).send('tfversion and image cannot be specified at the same time');
       return;
     }
-    let podTemplateSpec: any | undefined;
+    let podTemplateSpec: Record<string, unknown> | undefined;
     if (podTemplateSpecRaw) {
       try {
-        podTemplateSpec = JSON.parse(podTemplateSpecRaw as string);
+        const parsedPodTemplateSpec = JSON.parse(podTemplateSpecRaw as string);
+        podTemplateSpec = sanitizeViewerPodTemplateSpec(
+          parsedPodTemplateSpec,
+          tensorboardConfig.podTemplateSpec,
+        );
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.startsWith('podtemplatespec')) {
+          res.status(400).send(message);
+          return;
+        }
         res.status(400).send(`podtemplatespec is not valid JSON: ${err}`);
         return;
       }
