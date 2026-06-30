@@ -1,0 +1,9 @@
+[
+    {
+        "title": "Shell injection via ${{ github.event.label.name }} interpolation in pull_request_target run: bodies (add-ci-passed-label.yml, ci-checks.yml)",
+        "status": "active",
+        "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
+        "detected_at_pst": "2026-06-30T06:31:33-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/64"
+    }
+]

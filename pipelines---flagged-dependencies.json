@@ -1,0 +1,93 @@
+[
+    {
+        "title": "urllib3 2.6.3 vulnerable to CVE-2026-44432 (streaming decompression DoS) \u2014 covered by in-flight PR",
+        "status": "active",
+        "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
+        "detected_at_pst": "2026-06-30T06:31:33-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/36",
+        "cve_id": "CVE-2026-44432",
+        "ghsa_id": "GHSA-mf9v-mfxr-j63j",
+        "package": "pypi:urllib3",
+        "affected_version": "2.6.3",
+        "fixed_version": "2.7.0",
+        "severity": "high"
+    },
+    {
+        "title": "urllib3 2.6.3 vulnerable to CVE-2026-44431 (cross-origin header leak via low-level API) \u2014 covered by in-flight PR",
+        "status": "active",
+        "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
+        "detected_at_pst": "2026-06-30T06:31:33-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/36",
+        "cve_id": "CVE-2026-44431",
+        "ghsa_id": "GHSA-qccp-gfcp-xxvc",
+        "package": "pypi:urllib3",
+        "affected_version": "2.6.3",
+        "fixed_version": "2.7.0",
+        "severity": "high"
+    },
+    {
+        "title": "urllib3 2.6.3 in kubernetes_platform vulnerable to CVE-2026-44432 \u2014 covered by in-flight PR",
+        "status": "active",
+        "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
+        "detected_at_pst": "2026-06-30T06:31:33-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/43",
+        "cve_id": "CVE-2026-44432",
+        "ghsa_id": "GHSA-mf9v-mfxr-j63j",
+        "package": "pypi:urllib3",
+        "affected_version": "2.6.3",
+        "fixed_version": "2.7.0",
+        "severity": "high"
+    },
+    {
+        "title": "protobuf 4.25.8 vulnerable to GHSA-7gcm-g887-7qv7 (JSON recursion depth bypass) \u2014 covered by in-flight PR",
+        "status": "active",
+        "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
+        "detected_at_pst": "2026-06-30T06:31:33-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/53",
+        "cve_id": "CVE-2026-0994",
+        "ghsa_id": "GHSA-7gcm-g887-7qv7",
+        "package": "pypi:protobuf",
+        "affected_version": "4.25.8",
+        "fixed_version": "4.25.9",
+        "severity": "high"
+    },
+    {
+        "title": "form-data vulnerable to GHSA-hmw2-7cc7-3qxx (CRLF injection) in frontend/server \u2014 covered by in-flight PR",
+        "status": "active",
+        "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
+        "detected_at_pst": "2026-06-30T06:31:33-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/57",
+        "cve_id": "CVE-2026-12143",
+        "ghsa_id": "GHSA-hmw2-7cc7-3qxx",
+        "package": "npm:form-data",
+        "affected_version": "4.0.5",
+        "fixed_version": "4.0.6",
+        "severity": "high"
+    },
+    {
+        "title": "d3-color 1.2.3 vulnerable to GHSA-36jr-mh4h-2g58 (ReDoS) in frontend bundle \u2014 covered by in-flight PR",
+        "status": "active",
+        "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
+        "detected_at_pst": "2026-06-30T06:31:33-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/40",
+        "cve_id": null,
+        "ghsa_id": "GHSA-36jr-mh4h-2g58",
+        "package": "npm:d3-color",
+        "affected_version": "1.2.3",
+        "fixed_version": "3.1.0",
+        "severity": "high"
+    },
+    {
+        "title": "js-yaml 4.1.1 vulnerable to GHSA-h67p-54hq-rp68 (quadratic merge-key DoS) in frontend/server \u2014 covered by in-flight PR",
+        "status": "active",
+        "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
+        "detected_at_pst": "2026-06-30T06:31:33-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/49",
+        "cve_id": "CVE-2026-53550",
+        "ghsa_id": "GHSA-h67p-54hq-rp68",
+        "package": "npm:js-yaml",
+        "affected_version": "4.1.1",
+        "fixed_version": "4.2.0",
+        "severity": "medium"
+    }
+]
