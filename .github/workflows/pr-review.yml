@@ -1,7 +1,7 @@
 name: PR Review
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
@@ -13,15 +13,21 @@ jobs:
   review:
     if: >-
       github.repository == 'herikwebb/pipelines' &&
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.draft == false
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout PR
+      - name: Checkout base branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Fetch PR head
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO_URL: ${{ github.event.pull_request.head.repo.clone_url }}
+        run: git fetch --no-tags --depth=1 "${HEAD_REPO_URL}" "${HEAD_SHA}"
 
       - name: Run PR review
         env:
