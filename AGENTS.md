@@ -7,7 +7,7 @@
 
 ### Document metadata
 
-- Last updated: 2026-06-18
+- Last updated: 2026-06-30
 - Scope: KFP master branch (v2 engine), backend (Go), SDK (Python), frontend (React 19)
 
 ### Maintenance (agents and contributors)
@@ -520,6 +520,7 @@ When changing an effect-heavy frontend component, add or run the smallest releva
 - Composite actions: `.github/actions/` (e.g., `kfp-k8s`, `create-cluster`, `deploy`, `test-and-report`)
 - Typical checks: Go unit tests (backend), Python SDK tests, frontend tests/lint, image builds.
 - Frontend workflow (`frontend.yml`) verifies generated API clients are up to date by running `npm run apis:all` and failing on diff.
+- Fork-only automated review workflow (`pr-review.yml`) runs in `herikwebb/pipelines` for non-draft same-repository PRs and requires the `OPENAI_API_KEY` repository secret.
 
 ### Test matrices and variants (Kubernetes, stores, proxy, cache)
 
