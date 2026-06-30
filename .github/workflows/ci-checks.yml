@@ -21,18 +21,23 @@ jobs:
       - name: Determine whether CI polling is needed
         id: eligibility
         shell: bash
+        env:
+          HAS_OK_TO_TEST: ${{ contains(github.event.pull_request.labels.*.name, 'ok-to-test') }}
+          HAS_NEEDS_OK_TO_TEST: ${{ contains(github.event.pull_request.labels.*.name, 'needs-ok-to-test') }}
+          EVENT_ACTION: ${{ github.event.action }}
+          LABEL_NAME: ${{ github.event.label.name }}
         run: |
           should_poll=false
           reason="CI polling is not needed for this pull request event."
 
-          if [[ "${{ contains(github.event.pull_request.labels.*.name, 'ok-to-test') }}" != "true" ]]; then
+          if [[ "$HAS_OK_TO_TEST" != "true" ]]; then
             reason="PR is not yet labeled ok-to-test."
-          elif [[ "${{ contains(github.event.pull_request.labels.*.name, 'needs-ok-to-test') }}" == "true" ]]; then
+          elif [[ "$HAS_NEEDS_OK_TO_TEST" == "true" ]]; then
             reason="PR still has the needs-ok-to-test label."
-          elif [[ "${{ github.event.action }}" == "labeled" && "${{ github.event.label.name }}" != "ok-to-test" ]]; then
-            reason="Added label '${{ github.event.label.name }}' does not change CI eligibility."
-          elif [[ "${{ github.event.action }}" == "unlabeled" && "${{ github.event.label.name }}" != "needs-ok-to-test" ]]; then
-            reason="Removed label '${{ github.event.label.name }}' does not change CI eligibility."
+          elif [[ "$EVENT_ACTION" == "labeled" && "$LABEL_NAME" != "ok-to-test" ]]; then
+            reason="Added label '${LABEL_NAME}' does not change CI eligibility."
+          elif [[ "$EVENT_ACTION" == "unlabeled" && "$LABEL_NAME" != "needs-ok-to-test" ]]; then
+            reason="Removed label '${LABEL_NAME}' does not change CI eligibility."
           else
             should_poll=true
             reason="PR is eligible; running CI status polling."
@@ -60,7 +65,10 @@ jobs:
 
       - name: Skip CI polling with success
         if: steps.eligibility.outputs.should_poll != 'true'
-        run: echo "${{ steps.eligibility.outputs.reason }}"
+        shell: bash
+        env:
+          REASON: ${{ steps.eligibility.outputs.reason }}
+        run: echo "$REASON"
 
       - name: Record CI check result
         if: always()

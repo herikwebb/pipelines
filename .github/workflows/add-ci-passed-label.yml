@@ -152,36 +152,39 @@ jobs:
     steps:
       - name: Remove existing 'ci-passed' label
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           should_reset=false
 
-          if [[ "${{ github.event_name }}" == "pull_request_target" ]]; then
-            if [[ "${{ github.event.action }}" == "synchronize" || "${{ github.event.action }}" == "reopened" ]]; then
+          if [[ "$EVENT_NAME" == "pull_request_target" ]]; then
+            if [[ "$EVENT_ACTION" == "synchronize" || "$EVENT_ACTION" == "reopened" ]]; then
               should_reset=true
-            elif [[ "${{ github.event.action }}" == "labeled" && "${{ github.event.label.name }}" == "needs-ok-to-test" ]]; then
+            elif [[ "$EVENT_ACTION" == "labeled" && "$LABEL_NAME" == "needs-ok-to-test" ]]; then
               should_reset=true
-            elif [[ "${{ github.event.action }}" == "unlabeled" && "${{ github.event.label.name }}" == "ok-to-test" ]]; then
+            elif [[ "$EVENT_ACTION" == "unlabeled" && "$LABEL_NAME" == "ok-to-test" ]]; then
               should_reset=true
             fi
           fi
 
           if [[ "${should_reset}" != "true" ]]; then
-            echo "No stale ci-passed reset needed for ${GITHUB_EVENT_NAME} ${GITHUB_EVENT_ACTION:-}."
+            echo "No stale ci-passed reset needed for ${EVENT_NAME} ${EVENT_ACTION:-}."
             exit 0
           fi
 
-          pr_number=${{ github.event.pull_request.number }}
-          echo "Checking for stale 'ci-passed' label on PR #${pr_number} after ${{ github.event.action }}"
-          labels=$(gh pr view "${pr_number}" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')
+          echo "Checking for stale 'ci-passed' label on PR #${PR_NUMBER} after ${EVENT_ACTION}"
+          labels=$(gh pr view "${PR_NUMBER}" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')
 
           if echo "${labels}" | grep -qx 'ci-passed'; then
-            echo "Removing stale 'ci-passed' label from PR #${pr_number}"
-            gh pr edit "${pr_number}" --remove-label "ci-passed" --repo "$GITHUB_REPOSITORY"
+            echo "Removing stale 'ci-passed' label from PR #${PR_NUMBER}"
+            gh pr edit "${PR_NUMBER}" --remove-label "ci-passed" --repo "$GITHUB_REPOSITORY"
           else
-            echo "Label 'ci-passed' not present on PR #${pr_number}; nothing to remove."
+            echo "Label 'ci-passed' not present on PR #${PR_NUMBER}; nothing to remove."
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   add_ci_passed_label:
     name: Add 'ci-passed' label
@@ -190,13 +193,15 @@ jobs:
     steps:
       - name: Add 'ci-passed' label
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHOULD_ADD_LABEL: ${{ needs.fetch_data.outputs.should_add_label }}
+          PR_NUMBER: ${{ needs.fetch_data.outputs.pr_number }}
         run: |
-          if [[ "${{ needs.fetch_data.outputs.should_add_label }}" != "true" ]]; then
+          if [[ "$SHOULD_ADD_LABEL" != "true" ]]; then
             echo "No ci-passed label update needed for this event."
             exit 0
           fi
 
-          echo "Adding 'ci-passed' label to PR #${{ needs.fetch_data.outputs.pr_number }}"
-          gh pr edit ${{ needs.fetch_data.outputs.pr_number }} --add-label "ci-passed" --repo "$GITHUB_REPOSITORY"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "Adding 'ci-passed' label to PR #${PR_NUMBER}"
+          gh pr edit "${PR_NUMBER}" --add-label "ci-passed" --repo "$GITHUB_REPOSITORY"
