@@ -14,6 +14,7 @@ GitHub Actions workflows are in `.github/workflows/`; reusable composite actions
 - Workflows that deploy CI-built images overlap Kind setup with current-branch image builds. The shared deploy action waits for the complete artifact inventory; its normal window extends while a missing artifact's producer is queued or running, and completed producers receive a short publication grace.
 - CI Docker-sensitive paths use retry wrappers for image builds, BuildKit bootstrap, and runtime-image pulls. GitHub-hosted Docker jobs configure `mirror.gcr.io` as a Docker Hub pull-through cache, docker-container builders use the same mirror through `buildkitd.toml`, and uncached images still fall back to Docker Hub. Build jobs explicitly try and locally tag the mirrored BuildKit bootstrap image before falling back to Docker Hub within the shared retry budget.
 - `runtime-base-images.yml` is the single producer for the shared runtime-image artifact. It archives test-task, MySQL, and supported Argo images and builds the Modelcar fixture once into a separate archive; opted-in E2E lanes load that archive through the deploy action and fail setup if it is unavailable instead of contacting Hugging Face independently.
+- Fork-only automated review workflow (`pr-review.yml`) runs in `herikwebb/pipelines` for non-draft same-repository PRs and requires the `OPENAI_API_KEY` repository secret.
 - For workflow-only changes, verify referenced working directories, Docker contexts/files, scripts, and local action paths exist.
 
 ## Common CI failures
