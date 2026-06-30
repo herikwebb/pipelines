@@ -6,6 +6,7 @@ GitHub Actions workflows are in `.github/workflows/`; reusable composite actions
 - CI covers supported Kubernetes and Argo versions, database and Kubernetes pipeline stores, proxy/cache variants, and GPU scheduling. Preserve the relevant matrix coverage when changing a lane.
 - Use `.github/actions/setup-python-pip-cache` for pip caching. Give each dependency set a distinct `cache-scope` and hash every installed requirements file; do not use `setup-python`'s built-in pip cache.
 - `validate-generated-files.yml` validates backend-generated outputs. `frontend.yml` runs `npm run apis:all` and rejects stale frontend clients.
+- Fork-only automated review workflow (`pr-review.yml`) runs in `herikwebb/pipelines` for non-draft same-repository PRs and requires the `OPENAI_API_KEY` repository secret.
 - For workflow-only changes, verify referenced working directories, Docker contexts/files, scripts, and local action paths exist.
 
 ## Common CI failures
