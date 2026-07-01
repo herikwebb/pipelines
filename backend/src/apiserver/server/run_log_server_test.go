@@ -15,14 +15,22 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gorilla/mux"
 	api "github.com/kubeflow/pipelines/backend/api/v1beta1/go_client"
+	"github.com/kubeflow/pipelines/backend/src/apiserver/client"
+	"github.com/kubeflow/pipelines/backend/src/apiserver/common"
+	"github.com/kubeflow/pipelines/backend/src/apiserver/resource"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/metadata"
 )
 
 func TestNewRunLogServer(t *testing.T) {
@@ -82,4 +90,40 @@ func TestReadRunLogV1_MissingNodeId(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), NodeKey)
+}
+
+func TestReadRunLogV1_Unauthorized(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	userIdentity := "user@google.com"
+	md := metadata.New(map[string]string{common.GoogleIAPUserIdentityHeader: common.GoogleIAPUserIdentityPrefix + userIdentity})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	clientManager, manager, run := initWithOneTimeRun(t)
+	require.NotNil(t, clientManager, "Failed to create client manager")
+	require.NotNil(t, manager, "Failed to create manager")
+	require.NotNil(t, run, "Failed to create run")
+
+	clientManager.SubjectAccessReviewClientFake = client.NewFakeSubjectAccessReviewClientUnauthorized()
+	resourceManager := resource.NewResourceManager(clientManager, &resource.ResourceManagerOptions{CollectMetrics: false})
+
+	runLogServer := NewRunLogServer(resourceManager)
+
+	url := fmt.Sprintf("/apis/v1alpha1/runs/%s/nodes/node-1/log", run.UUID)
+	req := httptest.NewRequest("GET", url, nil).WithContext(ctx)
+	req = mux.SetURLVars(req, map[string]string{
+		RunKey:  run.UUID,
+		NodeKey: "node-1",
+	})
+
+	rr := httptest.NewRecorder()
+	runLogServer.ReadRunLogV1(rr, req)
+
+	require.Equal(t, http.StatusForbidden, rr.Code)
+
+	var errorResponse api.Error
+	err := json.Unmarshal(rr.Body.Bytes(), &errorResponse)
+	require.NoError(t, err)
+	require.Contains(t, errorResponse.ErrorMessage, "User 'user@google.com' is not authorized")
 }
