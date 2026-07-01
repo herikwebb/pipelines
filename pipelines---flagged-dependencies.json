@@ -89,5 +89,18 @@
         "affected_version": "4.1.1",
         "fixed_version": "4.2.0",
         "severity": "medium"
+    },
+    {
+        "title": "path-to-regexp 0.1.12 vulnerable to GHSA-37ch-88jc-xwx2 (multi-parameter ReDoS) in frontend/server \u2014 new PR filed",
+        "status": "active",
+        "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
+        "detected_at_pst": "2026-07-01T06:29:41-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/68",
+        "cve_id": "",
+        "ghsa_id": "GHSA-37ch-88jc-xwx2",
+        "package": "npm:path-to-regexp",
+        "affected_version": "0.1.12",
+        "fixed_version": "0.1.13",
+        "severity": "high"
     }
 ]
