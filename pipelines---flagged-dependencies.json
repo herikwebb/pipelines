@@ -102,5 +102,18 @@
         "affected_version": "0.1.12",
         "fixed_version": "0.1.13",
         "severity": "high"
+    },
+    {
+        "title": "js-yaml 3.14.1 in frontend vulnerable to GHSA-mh29-5h37-fv8m (prototype pollution) and GHSA-h67p-54hq-rp68 (quadratic-DoS via merge keys) \u2014 covered by in-flight PR",
+        "status": "active",
+        "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
+        "detected_at_pst": "2026-07-02T06:24:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/74",
+        "cve_id": "",
+        "ghsa_id": "GHSA-mh29-5h37-fv8m",
+        "package": "npm:js-yaml",
+        "affected_version": "3.14.1",
+        "fixed_version": "3.15.0",
+        "severity": "medium"
     }
 ]
