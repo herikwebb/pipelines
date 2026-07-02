@@ -12,5 +12,12 @@
         "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
         "detected_at_pst": "2026-07-01T06:39:28-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/70"
+    },
+    {
+        "title": "Missing authorization on v1beta1 TaskService (CreateTaskV1 + ListTasksV1) allows cross-tenant task disclosure and execution-cache poisoning \u2014 covered by in-flight PR",
+        "status": "active",
+        "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
+        "detected_at_pst": "2026-07-02T06:35:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/76"
     }
 ]
