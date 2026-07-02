@@ -20,20 +20,28 @@ import (
 	"time"
 
 	api "github.com/kubeflow/pipelines/backend/api/v1beta1/go_client"
+	"github.com/kubeflow/pipelines/backend/src/apiserver/common"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/resource"
 	"github.com/kubeflow/pipelines/backend/src/common/util"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func createTaskServer(resourceManager *resource.ResourceManager) *TaskServer {
-	return &TaskServer{resourceManager: resourceManager}
+	return &TaskServer{
+		BaseRunServer: &BaseRunServer{
+			resourceManager: resourceManager,
+			options:         &RunServerOptions{CollectMetrics: false},
+		},
+	}
 }
 
 func TestNewTaskServer(t *testing.T) {
 	clients, manager, _ := initWithExperiment(t)
 	defer clients.Close()
-	server := NewTaskServer(manager)
+	server := NewTaskServer(manager, &RunServerOptions{CollectMetrics: false})
 	assert.NotNil(t, server)
 	assert.Equal(t, manager, server.resourceManager)
 }
@@ -205,6 +213,21 @@ func TestListTasksV1_Empty(t *testing.T) {
 	assert.NotNil(t, response)
 	assert.Empty(t, response.Tasks)
 	assert.Equal(t, int32(0), response.TotalSize)
+}
+
+func TestListTasksV1_MultiUser_MissingRunReferenceRejected(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	md := metadata.New(map[string]string{common.GoogleIAPUserIdentityHeader: common.GoogleIAPUserIdentityPrefix + "user@google.com"})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	clients, manager, _ := initWithExperiment(t)
+	defer clients.Close()
+	server := createTaskServer(manager)
+	_, err := server.ListTasksV1(ctx, &api.ListTasksRequest{})
+	assert.NotNil(t, err)
+	assert.Contains(t, err.Error(), "in multi-user mode a Run resource reference is required")
 }
 
 func TestListTasksV1_AfterCreate(t *testing.T) {

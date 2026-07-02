@@ -361,7 +361,7 @@ func startRPCServer(resourceManager *resource.ResourceManager, tlsCfg *tls.Confi
 	apiv1beta1.RegisterPipelineServiceServer(s, PipelineServerV1)
 	apiv1beta1.RegisterJobServiceServer(s, JobServerV1)
 	apiv1beta1.RegisterRunServiceServer(s, RunServerV1)
-	apiv1beta1.RegisterTaskServiceServer(s, server.NewTaskServer(resourceManager))
+	apiv1beta1.RegisterTaskServiceServer(s, server.NewTaskServer(resourceManager, &server.RunServerOptions{CollectMetrics: *collectMetricsFlag}))
 	apiv1beta1.RegisterReportServiceServer(s, ReportServerV1)
 
 	apiv1beta1.RegisterVisualizationServiceServer(

@@ -21,13 +21,15 @@ import (
 	apiv1beta1 "github.com/kubeflow/pipelines/backend/api/v1beta1/go_client"
 
 	api "github.com/kubeflow/pipelines/backend/api/v1beta1/go_client"
+	"github.com/kubeflow/pipelines/backend/src/apiserver/common"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/model"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/resource"
 	"github.com/kubeflow/pipelines/backend/src/common/util"
+	authorizationv1 "k8s.io/api/authorization/v1"
 )
 
 type TaskServer struct {
-	resourceManager *resource.ResourceManager
+	*BaseRunServer
 	apiv1beta1.UnimplementedTaskServiceServer
 }
 
@@ -37,6 +39,15 @@ func (s *TaskServer) CreateTaskV1(ctx context.Context, request *api.CreateTaskRe
 	err := s.validateCreateTaskRequest(request)
 	if err != nil {
 		return nil, util.Wrap(err, "Failed to create a new task due to validation error")
+	}
+
+	// A task is scoped to its parent run, so the caller must be authorized to
+	// modify the run before the task row can be created. In single-user mode
+	// canAccessRun is a no-op.
+	if err := s.canAccessRun(ctx, request.GetTask().GetRunId(), &authorizationv1.ResourceAttributes{
+		Verb: common.RbacResourceVerbCreate,
+	}); err != nil {
+		return nil, util.Wrap(err, "Failed to authorize the create task request")
 	}
 
 	modelTask, err := toModelTask(request.GetTask())
@@ -106,6 +117,23 @@ func (s *TaskServer) ListTasksV1(ctx context.Context, request *api.ListTasksRequ
 		return nil, util.Wrap(err, "Validating filter failed")
 	}
 
+	// Tasks belong to a specific run, so in multi-user mode the caller must
+	// authorize against a concrete run rather than list every task across every
+	// namespace. In single-user mode canAccessRun is a no-op and the caller can
+	// still list without a filter for backwards compatibility.
+	var runIDForAuth string
+	if filterContext.ReferenceKey != nil && filterContext.ReferenceKey.Type == model.RunResourceType {
+		runIDForAuth = filterContext.ReferenceKey.ID
+	}
+	if common.IsMultiUserMode() && runIDForAuth == "" {
+		return nil, util.NewInvalidInputError("Failed to list tasks: in multi-user mode a Run resource reference is required to authorize the request")
+	}
+	if err := s.canAccessRun(ctx, runIDForAuth, &authorizationv1.ResourceAttributes{
+		Verb: common.RbacResourceVerbList,
+	}); err != nil {
+		return nil, util.Wrap(err, "Failed to authorize the list tasks request")
+	}
+
 	tasks, total_size, nextPageToken, err := s.resourceManager.ListTasks(filterContext, opts)
 	if err != nil {
 		return nil, util.Wrap(err, "List tasks failed")
@@ -118,6 +146,11 @@ func (s *TaskServer) ListTasksV1(ctx context.Context, request *api.ListTasksRequ
 		nil
 }
 
-func NewTaskServer(resourceManager *resource.ResourceManager) *TaskServer {
-	return &TaskServer{resourceManager: resourceManager}
+func NewTaskServer(resourceManager *resource.ResourceManager, options *RunServerOptions) *TaskServer {
+	return &TaskServer{
+		BaseRunServer: &BaseRunServer{
+			resourceManager: resourceManager,
+			options:         options,
+		},
+	}
 }
