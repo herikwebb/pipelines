@@ -172,6 +172,33 @@ describe('utils', () => {
       );
       expect(filePath).toEqual('');
     });
+
+    it('does not match a subPath that is only a sibling prefix', () => {
+      // `pipeline10` shares a textual prefix with the mounted subPath
+      // `pipeline1` but is a distinct sibling directory, so it must not
+      // resolve against the `pipeline1` mount.
+      const [filePath, err] = findFileOnPodVolume(podTemplateSpec, {
+        containerNames: undefined,
+        volumeMountName: 'artifact',
+        filePathInVolume: 'pipeline10/a/b/c',
+      });
+      expect(err).toEqual(
+        'Cannot find file "volume://artifact/pipeline10/a/b/c" in pod "unknown": volume "artifact" not mounted or volume "artifact" with subPath (which is prefix of pipeline10/a/b/c) not mounted',
+      );
+      expect(filePath).toEqual('');
+    });
+
+    it('propagates the resolver error when a matched path escapes the mount', () => {
+      const [filePath, err] = findFileOnPodVolume(podTemplateSpec, {
+        containerNames: undefined,
+        volumeMountName: 'artifact',
+        filePathInVolume: 'pipeline1/../../etc/passwd',
+      });
+      expect(err).toEqual(
+        'Cannot find file "volume://artifact/pipeline1/../../etc/passwd" in pod "unknown": File pipeline1/../../etc/passwd escapes volume mount /main1',
+      );
+      expect(filePath).toEqual('');
+    });
   });
 
   describe('resolveFilePathOnVolume', () => {
@@ -212,6 +239,57 @@ describe('utils', () => {
         '',
         'File a/b/c not mounted, expecting the file to be inside volume mount subpath other',
       ]);
+    });
+
+    it('does not treat a sibling prefix as inside the subPath', () => {
+      const path = resolveFilePathOnVolume({
+        volumeMountPath: '/data',
+        filePathInVolume: 'pipeline10/file.txt',
+        volumeMountSubPath: 'pipeline1',
+      });
+      expect(path).toEqual([
+        '',
+        'File pipeline10/file.txt not mounted, expecting the file to be inside volume mount subpath pipeline1',
+      ]);
+    });
+
+    it('rejects traversal that escapes the mount when no subPath is set', () => {
+      const path = resolveFilePathOnVolume({
+        volumeMountPath: '/etc/config',
+        filePathInVolume: '../../var/run/secrets/kubernetes.io/serviceaccount/token',
+        volumeMountSubPath: undefined,
+      });
+      expect(path).toEqual([
+        '',
+        'File ../../var/run/secrets/kubernetes.io/serviceaccount/token escapes volume mount /etc/config',
+      ]);
+    });
+
+    it('rejects traversal that escapes the mount after subPath strip', () => {
+      const path = resolveFilePathOnVolume({
+        volumeMountPath: '/data1',
+        filePathInVolume: 'pipeline1/../../etc/passwd',
+        volumeMountSubPath: 'pipeline1',
+      });
+      expect(path).toEqual(['', 'File pipeline1/../../etc/passwd escapes volume mount /data1']);
+    });
+
+    it('allows descendant paths for a volume mounted at root', () => {
+      const path = resolveFilePathOnVolume({
+        volumeMountPath: '/',
+        filePathInVolume: 'foo/bar',
+        volumeMountSubPath: undefined,
+      });
+      expect(path).toEqual(['/foo/bar', undefined]);
+    });
+
+    it('matches a subPath configured with a trailing slash', () => {
+      const path = resolveFilePathOnVolume({
+        volumeMountPath: '/data',
+        filePathInVolume: 'pipeline1/file.txt',
+        volumeMountSubPath: 'pipeline1/',
+      });
+      expect(path).toEqual(['/data/file.txt', undefined]);
     });
   });
 
