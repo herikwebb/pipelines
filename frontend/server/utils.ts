@@ -75,10 +75,29 @@ export function parseJSONString<T>(str: string) {
   }
 }
 
+/** Strip trailing slashes so `pipeline1/` and `pipeline1` compare equal. */
+function trimTrailingSlashes(subPath: string): string {
+  return subPath.replace(/\/+$/, '');
+}
+
+/**
+ * Whether `filePathInVolume` lies within `subPath`, matching only on path
+ * segment boundaries. A plain `startsWith` check would treat siblings such as
+ * `pipeline10/file.txt` as being inside `pipeline1`; requiring an exact match
+ * or a trailing `/` avoids that false positive. Trailing slashes on `subPath`
+ * are ignored so a configured `pipeline1/` still matches `pipeline1/file.txt`.
+ */
+function isWithinSubPath(filePathInVolume: string, subPath: string): boolean {
+  const normalizedSubPath = trimTrailingSlashes(subPath);
+  return (
+    filePathInVolume === normalizedSubPath || filePathInVolume.startsWith(`${normalizedSubPath}/`)
+  );
+}
+
 /**
  * find final file path in pod:
  * 1. check volume and volume mount exist in pod
- * 2. if volume mount configured with subPath, check filePathInVolume startsWith subPath and prune filePathInVolume
+ * 2. if volume mount configured with subPath, check filePathInVolume is within subPath and prune filePathInVolume
  * 3. concat volume mount path with pruned filePathInVolume as final path or error message if check failed
  * @param pod contains volumes and volume mounts info
  * @param options
@@ -136,9 +155,9 @@ export function findFileOnPodVolume(
     if (v?.name !== volumeMountName) {
       return false;
     }
-    // if volume subPath set, volume subPath must be prefix of key
+    // if volume subPath set, filePathInVolume must be within subPath
     if (v?.subPath) {
-      return filePathInVolume.startsWith(v.subPath);
+      return isWithinSubPath(filePathInVolume, v.subPath);
     }
     return true;
   });
@@ -158,7 +177,7 @@ export function findFileOnPodVolume(
   });
 
   if (err) {
-    return ['', `${prefixErrorMessage}  err`];
+    return ['', `${prefixErrorMessage} ${err}`];
   }
   return [filePath, undefined];
 }
@@ -169,19 +188,35 @@ export function resolveFilePathOnVolume(volume: {
   volumeMountSubPath: string | undefined;
 }): [string, string | undefined] {
   const { filePathInVolume, volumeMountPath, volumeMountSubPath } = volume;
+  let joined: string;
   if (!volumeMountSubPath) {
-    return [path.join(volumeMountPath, filePathInVolume), undefined];
-  }
-  if (filePathInVolume.startsWith(volumeMountSubPath)) {
+    joined = path.join(volumeMountPath, filePathInVolume);
+  } else if (isWithinSubPath(filePathInVolume, volumeMountSubPath)) {
+    // Prune the subPath prefix using its trailing-slash-trimmed length so the
+    // remainder lines up with the boundary `isWithinSubPath` matched on.
+    const normalizedSubPath = trimTrailingSlashes(volumeMountSubPath);
+    joined = path.join(volumeMountPath, filePathInVolume.substring(normalizedSubPath.length));
+  } else {
     return [
-      path.join(volumeMountPath, filePathInVolume.substring(volumeMountSubPath.length)),
-      undefined,
+      '',
+      `File ${filePathInVolume} not mounted, expecting the file to be inside volume mount subpath ${volumeMountSubPath}`,
     ];
   }
-  return [
-    '',
-    `File ${filePathInVolume} not mounted, expecting the file to be inside volume mount subpath ${volumeMountSubPath}`,
-  ];
+  // Reject any path that escapes the mount point via `..` segments or
+  // absolute components — path.join collapses `..` so a `filePathInVolume`
+  // of `../../etc/passwd` would otherwise resolve outside the volume.
+  const normalizedMount = path.resolve(volumeMountPath);
+  const normalizedJoined = path.resolve(joined);
+  // `path.resolve('/')` is `/`, which already ends in a slash — appending
+  // another would make the prefix `//` and reject every descendant of a
+  // root-mounted volume, so only add the separator when it is missing.
+  const mountPrefix = normalizedMount.endsWith('/') ? normalizedMount : `${normalizedMount}/`;
+  const insideMount =
+    normalizedJoined === normalizedMount || normalizedJoined.startsWith(mountPrefix);
+  if (!insideMount) {
+    return ['', `File ${filePathInVolume} escapes volume mount ${volumeMountPath}`];
+  }
+  return [normalizedJoined, undefined];
 }
 
 export interface PreviewStreamOptions extends TransformOptions {
