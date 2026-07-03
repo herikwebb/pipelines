@@ -20,7 +20,7 @@ import {
   findFileOnPodVolume,
   parseError,
   resolveFilePathOnVolume,
-  resolveRealPathWithinMount,
+  openRealFileWithinMount,
 } from './utils.js';
 
 describe('utils', () => {
@@ -297,7 +297,7 @@ describe('utils', () => {
     });
   });
 
-  describe('resolveRealPathWithinMount', () => {
+  describe('openRealFileWithinMount', () => {
     let mountDir: string;
     let outsideDir: string;
 
@@ -318,25 +318,26 @@ describe('utils', () => {
       await fsPromises.rm(outsideDir, { recursive: true, force: true });
     });
 
-    it('returns the resolved real path for a file inside the mount', async () => {
+    it('returns an open handle to a file inside the mount', async () => {
       const filePath = nodePath.join(mountDir, 'inside.txt');
-      const [safePath, err] = await resolveRealPathWithinMount(filePath, mountDir);
+      const [fileHandle, err] = await openRealFileWithinMount(filePath, mountDir);
       expect(err).toBeUndefined();
-      expect(safePath).toEqual(await fsPromises.realpath(filePath));
+      expect(fileHandle).toBeDefined();
+      const contents = await fileHandle!.readFile();
+      expect(contents.toString()).toEqual('ok');
+      await fileHandle!.close();
     });
 
-    it('rejects a symlink inside the mount that escapes it', async () => {
+    it('rejects (and does not return a handle for) a symlink escaping the mount', async () => {
       const filePath = nodePath.join(mountDir, 'escape');
-      const [safePath, err] = await resolveRealPathWithinMount(filePath, mountDir);
-      expect(safePath).toEqual('');
+      const [fileHandle, err] = await openRealFileWithinMount(filePath, mountDir);
+      expect(fileHandle).toBeUndefined();
       expect(err).toContain('via symlink');
     });
 
-    it('passes the original path through when it cannot be resolved (missing file)', async () => {
+    it('propagates the open error for a missing file', async () => {
       const filePath = nodePath.join(mountDir, 'does-not-exist');
-      const [safePath, err] = await resolveRealPathWithinMount(filePath, mountDir);
-      expect(err).toBeUndefined();
-      expect(safePath).toEqual(filePath);
+      await expect(openRealFileWithinMount(filePath, mountDir)).rejects.toThrow();
     });
   });
 
