@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { readFileSync } from 'fs';
+import { readFileSync, promises as fsPromises } from 'fs';
 import { Transform, TransformOptions } from 'stream';
 import { posix as path } from 'path';
 
@@ -81,6 +81,16 @@ function trimTrailingSlashes(subPath: string): string {
 }
 
 /**
+ * Whether an already-resolved absolute path stays within a resolved mount root
+ * (equal to it or a descendant). `resolvedMount` may itself be `/`, whose
+ * trailing slash must not be doubled or every descendant would be rejected.
+ */
+function isPathInsideMount(resolvedPath: string, resolvedMount: string): boolean {
+  const mountPrefix = resolvedMount.endsWith('/') ? resolvedMount : `${resolvedMount}/`;
+  return resolvedPath === resolvedMount || resolvedPath.startsWith(mountPrefix);
+}
+
+/**
  * Whether `filePathInVolume` lies within `subPath`, matching only on path
  * segment boundaries. A plain `startsWith` check would treat siblings such as
  * `pipeline10/file.txt` as being inside `pipeline1`; requiring an exact match
@@ -104,7 +114,9 @@ function isWithinSubPath(filePathInVolume: string, subPath: string): boolean {
  *  - containerNames optional, will match to find container or container[0] in pod will be used
  *  - volumeMountName container volume mount name
  *  - filePathInVolume file path in volume
- * @return [final file path, error message if check failed]
+ * @return [final file path, error message if check failed, resolved volume mount path].
+ *   The mount path lets callers re-validate the real (symlink-resolved) path
+ *   before reading; it is '' when an error is returned.
  */
 export function findFileOnPodVolume(
   pod: any,
@@ -113,7 +125,7 @@ export function findFileOnPodVolume(
     volumeMountName: string;
     filePathInVolume: string;
   },
-): [string, string | undefined] {
+): [string, string | undefined, string] {
   const { containerNames, volumeMountName, filePathInVolume } = options;
 
   const volumes = pod?.spec?.volumes;
@@ -122,7 +134,7 @@ export function findFileOnPodVolume(
   }":`;
   // volumes not specified or volume named ${volumeMountName} not specified
   if (!Array.isArray(volumes) || !volumes.find((v) => v?.name === volumeMountName)) {
-    return ['', `${prefixErrorMessage} volume "${volumeMountName}" not configured`];
+    return ['', `${prefixErrorMessage} volume "${volumeMountName}" not configured`, ''];
   }
 
   // get pod main container
@@ -141,12 +153,12 @@ export function findFileOnPodVolume(
 
   if (!container) {
     const containerNamesMessage = containerNames ? containerNames.join('" or "') : '';
-    return ['', `${prefixErrorMessage} container "${containerNamesMessage}" not found`];
+    return ['', `${prefixErrorMessage} container "${containerNamesMessage}" not found`, ''];
   }
 
   const volumeMounts = container.volumeMounts;
   if (!Array.isArray(volumeMounts)) {
-    return ['', `${prefixErrorMessage} volume "${volumeMountName}" not mounted`];
+    return ['', `${prefixErrorMessage} volume "${volumeMountName}" not mounted`, ''];
   }
 
   // find volumes mount
@@ -166,6 +178,7 @@ export function findFileOnPodVolume(
     return [
       '',
       `${prefixErrorMessage} volume "${volumeMountName}" not mounted or volume "${volumeMountName}" with subPath (which is prefix of ${filePathInVolume}) not mounted`,
+      '',
     ];
   }
 
@@ -177,9 +190,9 @@ export function findFileOnPodVolume(
   });
 
   if (err) {
-    return ['', `${prefixErrorMessage} ${err}`];
+    return ['', `${prefixErrorMessage} ${err}`, ''];
   }
-  return [filePath, undefined];
+  return [filePath, undefined, volumeMount.mountPath];
 }
 
 export function resolveFilePathOnVolume(volume: {
@@ -207,16 +220,43 @@ export function resolveFilePathOnVolume(volume: {
   // of `../../etc/passwd` would otherwise resolve outside the volume.
   const normalizedMount = path.resolve(volumeMountPath);
   const normalizedJoined = path.resolve(joined);
-  // `path.resolve('/')` is `/`, which already ends in a slash — appending
-  // another would make the prefix `//` and reject every descendant of a
-  // root-mounted volume, so only add the separator when it is missing.
-  const mountPrefix = normalizedMount.endsWith('/') ? normalizedMount : `${normalizedMount}/`;
-  const insideMount =
-    normalizedJoined === normalizedMount || normalizedJoined.startsWith(mountPrefix);
-  if (!insideMount) {
+  if (!isPathInsideMount(normalizedJoined, normalizedMount)) {
     return ['', `File ${filePathInVolume} escapes volume mount ${volumeMountPath}`];
   }
   return [normalizedJoined, undefined];
+}
+
+/**
+ * Resolve the real (symlink-free) path of `filePath` and confirm it is still
+ * within `volumeMountPath`. The lexical check in `resolveFilePathOnVolume`
+ * blocks `..` escapes but not symlinks inside the volume that point outside it
+ * (for example `link -> /etc/passwd`), which would otherwise be followed when
+ * the file is opened. Resolving symlinks here — immediately before the caller
+ * reads `filePath` — closes that gap and minimizes the TOCTOU window by handing
+ * back the fully resolved path to open.
+ *
+ * If the mount or file cannot be resolved (for example the file does not
+ * exist), the original `filePath` is returned unchanged so the caller's read
+ * surfaces the missing-file error as before — there is nothing a symlink could
+ * expose when the path does not resolve to a real file.
+ * @return [path safe to read, error message if the resolved path escapes the mount]
+ */
+export async function resolveRealPathWithinMount(
+  filePath: string,
+  volumeMountPath: string,
+): Promise<[string, string | undefined]> {
+  let realMountPath: string;
+  let realFilePath: string;
+  try {
+    realMountPath = await fsPromises.realpath(volumeMountPath);
+    realFilePath = await fsPromises.realpath(filePath);
+  } catch {
+    return [filePath, undefined];
+  }
+  if (!isPathInsideMount(realFilePath, realMountPath)) {
+    return ['', `File ${filePath} escapes volume mount ${volumeMountPath} via symlink`];
+  }
+  return [realFilePath, undefined];
 }
 
 export interface PreviewStreamOptions extends TransformOptions {
