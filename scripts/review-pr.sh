@@ -150,6 +150,16 @@ ${REVIEW}
 EOF
 )
 
+# GitHub caps issue/PR comment bodies at 65536 characters. With the higher token
+# budget a review can grow large, so truncate the body (leaving margin) and add a
+# notice rather than letting `gh pr comment` fail on an oversized body.
+GITHUB_COMMENT_MAX_CHARS=65000
+if (( ${#BODY} > GITHUB_COMMENT_MAX_CHARS )); then
+  TRUNCATION_NOTICE=$'\n\n_[Review truncated to fit GitHub'"'"'s comment size limit.]_'
+  KEEP=$(( GITHUB_COMMENT_MAX_CHARS - ${#TRUNCATION_NOTICE} ))
+  BODY="${BODY:0:KEEP}${TRUNCATION_NOTICE}"
+fi
+
 gh pr comment "${PR_NUMBER}" \
   --repo "${REPO}" \
   --body "${BODY}"
