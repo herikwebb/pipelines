@@ -44,6 +44,7 @@
 ### Commit policy (agents and contributors)
 
 - Always sign off on commits with `git commit -s` (adds a `Signed-off-by:` trailer).
+- Every commit must be authored, committed, and signed off by the **human submitter**, never by an agent/tool identity. Automated environments often default the git identity to the agent (for example `Claude <noreply@anthropic.com>`), which makes `git commit -s` sign off as the agent and violates the DCO requirement that the submitter attests to each commit. Before committing, set the repo-local identity to the submitter (`git config user.name` / `git config user.email`) and verify with `git log -1 --format='%an <%ae> / %(trailers:key=Signed-off-by)'` that both the author and the `Signed-off-by:` trailer are the submitter. When adding follow-up commits to a PR the submitter already authored, reuse that same identity (for example `git commit -C <original-commit>`); do not add a second, agent-identity sign-off.
 - Never include AI agents (e.g. Claude Code, Copilot, or similar tools) as co-authors on commits. The human author is responsible for the work.
 - See `CONTRIBUTING.md` at the repo root for DCO sign-off requirements and general PR conventions.
 
