@@ -11,7 +11,10 @@ if [[ -z "${OPENAI_API_KEY:-}" ]]; then
 fi
 
 OPENAI_MODEL="${OPENAI_MODEL:-gpt-5.5}"
-OPENAI_MAX_OUTPUT_TOKENS="${OPENAI_MAX_OUTPUT_TOKENS:-3000}"
+# Export so the python child process inherits it; reasoning models spend part of
+# this budget on reasoning tokens, so keep enough headroom to still emit review
+# text (3000 was easily exhausted, producing empty responses).
+export OPENAI_MAX_OUTPUT_TOKENS="${OPENAI_MAX_OUTPUT_TOKENS:-16000}"
 DIFF_LIMIT_BYTES="${DIFF_LIMIT_BYTES:-120000}"
 
 CHANGED_FILES="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}")"
@@ -73,7 +76,7 @@ with open(prompt_path, "r", encoding="utf-8", errors="replace") as prompt_file:
     prompt = prompt_file.read()
 
 model = os.environ["OPENAI_MODEL"]
-max_output_tokens = int(os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "3000"))
+max_output_tokens = int(os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "16000"))
 
 payload = {
     "model": model,
