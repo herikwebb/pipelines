@@ -18,6 +18,7 @@ import {
   findFileOnPodVolume,
   parseJSONString,
   isAllowedResourceName,
+  resolveRealPathWithinMount,
 } from '../utils.js';
 import {
   createMinioClient,
@@ -695,7 +696,7 @@ function getVolumeArtifactsHandler(options: { bucket: string; key: string }, pee
 
       // ml-pipeline-ui server container name also be called 'ml-pipeline-ui-artifact' in KFP multi user mode.
       // https://github.com/kubeflow/manifests/blob/master/pipeline/installs/multi-user/pipelines-profile-controller/sync.py#L212
-      const [filePath, parseError] = findFileOnPodVolume(pod, {
+      const [filePath, parseError, volumeMountPath] = findFileOnPodVolume(pod, {
         containerNames: ['ml-pipeline-ui', 'ml-pipeline-ui-artifact'],
         volumeMountName: bucket,
         filePathInVolume: key,
@@ -706,16 +707,30 @@ function getVolumeArtifactsHandler(options: { bucket: string; key: string }, pee
         return;
       }
 
-      // TODO: support directory and support filePath include wildcards '*'
-      const stat = await fs.promises.stat(filePath);
-      if (stat.isDirectory()) {
-        res
-          .status(400)
-          .send(`Failed to open volume file ${filePath} is directory, does not support now`);
+      // The lexical check in findFileOnPodVolume blocks `..` escapes but not a
+      // symlink inside the volume pointing outside it. Resolve the real path and
+      // re-verify containment immediately before reading so a symlink cannot be
+      // followed out of the mount.
+      const [safeFilePath, symlinkError] = await resolveRealPathWithinMount(
+        filePath,
+        volumeMountPath,
+      );
+      if (symlinkError) {
+        console.log(`Failed to open volume: ${symlinkError}`);
+        res.status(404).send(`Failed to open volume.`);
         return;
       }
 
-      fs.createReadStream(filePath).pipe(new PreviewStream({ peek })).pipe(res);
+      // TODO: support directory and support filePath include wildcards '*'
+      const stat = await fs.promises.stat(safeFilePath);
+      if (stat.isDirectory()) {
+        res
+          .status(400)
+          .send(`Failed to open volume file ${safeFilePath} is directory, does not support now`);
+        return;
+      }
+
+      fs.createReadStream(safeFilePath).pipe(new PreviewStream({ peek })).pipe(res);
     } catch (err) {
       console.log(`Failed to open volume: ${err}`);
       res.status(500).send(`Failed to open volume.`);

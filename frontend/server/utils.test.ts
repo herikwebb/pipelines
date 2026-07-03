@@ -12,11 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { PassThrough } from 'stream';
+import { promises as fsPromises } from 'fs';
+import * as os from 'os';
+import * as nodePath from 'path';
 import {
   PreviewStream,
   findFileOnPodVolume,
   parseError,
   resolveFilePathOnVolume,
+  resolveRealPathWithinMount,
 } from './utils.js';
 
 describe('utils', () => {
@@ -290,6 +294,49 @@ describe('utils', () => {
         volumeMountSubPath: 'pipeline1/',
       });
       expect(path).toEqual(['/data/file.txt', undefined]);
+    });
+  });
+
+  describe('resolveRealPathWithinMount', () => {
+    let mountDir: string;
+    let outsideDir: string;
+
+    beforeAll(async () => {
+      mountDir = await fsPromises.mkdtemp(nodePath.join(os.tmpdir(), 'kfp-mount-'));
+      outsideDir = await fsPromises.mkdtemp(nodePath.join(os.tmpdir(), 'kfp-outside-'));
+      await fsPromises.writeFile(nodePath.join(mountDir, 'inside.txt'), 'ok');
+      await fsPromises.writeFile(nodePath.join(outsideDir, 'secret.txt'), 'secret');
+      // A symlink inside the mount that points to a file outside it.
+      await fsPromises.symlink(
+        nodePath.join(outsideDir, 'secret.txt'),
+        nodePath.join(mountDir, 'escape'),
+      );
+    });
+
+    afterAll(async () => {
+      await fsPromises.rm(mountDir, { recursive: true, force: true });
+      await fsPromises.rm(outsideDir, { recursive: true, force: true });
+    });
+
+    it('returns the resolved real path for a file inside the mount', async () => {
+      const filePath = nodePath.join(mountDir, 'inside.txt');
+      const [safePath, err] = await resolveRealPathWithinMount(filePath, mountDir);
+      expect(err).toBeUndefined();
+      expect(safePath).toEqual(await fsPromises.realpath(filePath));
+    });
+
+    it('rejects a symlink inside the mount that escapes it', async () => {
+      const filePath = nodePath.join(mountDir, 'escape');
+      const [safePath, err] = await resolveRealPathWithinMount(filePath, mountDir);
+      expect(safePath).toEqual('');
+      expect(err).toContain('via symlink');
+    });
+
+    it('passes the original path through when it cannot be resolved (missing file)', async () => {
+      const filePath = nodePath.join(mountDir, 'does-not-exist');
+      const [safePath, err] = await resolveRealPathWithinMount(filePath, mountDir);
+      expect(err).toBeUndefined();
+      expect(safePath).toEqual(filePath);
     });
   });
 
