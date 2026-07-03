@@ -18,7 +18,7 @@ import {
   findFileOnPodVolume,
   parseJSONString,
   isAllowedResourceName,
-  resolveRealPathWithinMount,
+  openRealFileWithinMount,
 } from '../utils.js';
 import {
   createMinioClient,
@@ -37,7 +37,6 @@ import { URL } from 'url';
 import { getGCSClient, listGCSObjectNames, downloadGCSObjectStream } from '../gcs-helper.js';
 import type { GCSClient } from '../gcs-helper.js';
 
-import * as fs from 'fs';
 import { isAllowedDomain } from './domain-checker.js';
 import { getK8sSecret } from '../k8s-helper.js';
 import { CredentialBody } from 'google-auth-library';
@@ -708,29 +707,43 @@ function getVolumeArtifactsHandler(options: { bucket: string; key: string }, pee
       }
 
       // The lexical check in findFileOnPodVolume blocks `..` escapes but not a
-      // symlink inside the volume pointing outside it. Resolve the real path and
-      // re-verify containment immediately before reading so a symlink cannot be
-      // followed out of the mount.
-      const [safeFilePath, symlinkError] = await resolveRealPathWithinMount(
-        filePath,
-        volumeMountPath,
-      );
+      // symlink inside the volume pointing outside it. Open the file and verify
+      // the opened descriptor still resolves inside the mount, then stream from
+      // that same handle — validating and reading the same fd avoids a
+      // time-of-check/time-of-use race where the file could be swapped for a
+      // symlink between a path check and the open.
+      const [fileHandle, symlinkError] = await openRealFileWithinMount(filePath, volumeMountPath);
       if (symlinkError) {
         console.log(`Failed to open volume: ${symlinkError}`);
         res.status(404).send(`Failed to open volume.`);
         return;
       }
-
-      // TODO: support directory and support filePath include wildcards '*'
-      const stat = await fs.promises.stat(safeFilePath);
-      if (stat.isDirectory()) {
-        res
-          .status(400)
-          .send(`Failed to open volume file ${safeFilePath} is directory, does not support now`);
+      if (!fileHandle) {
+        res.status(500).send(`Failed to open volume.`);
         return;
       }
 
-      fs.createReadStream(safeFilePath).pipe(new PreviewStream({ peek })).pipe(res);
+      try {
+        // TODO: support directory and support filePath include wildcards '*'
+        const stat = await fileHandle.stat();
+        if (stat.isDirectory()) {
+          await fileHandle.close();
+          res
+            .status(400)
+            .send(`Failed to open volume file ${filePath} is directory, does not support now`);
+          return;
+        }
+
+        // createReadStream (autoClose default) closes the handle when the stream
+        // ends or errors; destroy it if the response closes first (client abort
+        // or a partial peek read) so the descriptor is not leaked.
+        const fileStream = fileHandle.createReadStream();
+        res.on('close', () => fileStream.destroy());
+        fileStream.pipe(new PreviewStream({ peek })).pipe(res);
+      } catch (streamErr) {
+        await fileHandle.close();
+        throw streamErr;
+      }
     } catch (err) {
       console.log(`Failed to open volume: ${err}`);
       res.status(500).send(`Failed to open volume.`);

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { readFileSync, promises as fsPromises } from 'fs';
+import type { FileHandle } from 'fs/promises';
 import { Transform, TransformOptions } from 'stream';
 import { posix as path } from 'path';
 
@@ -227,36 +228,47 @@ export function resolveFilePathOnVolume(volume: {
 }
 
 /**
- * Resolve the real (symlink-free) path of `filePath` and confirm it is still
- * within `volumeMountPath`. The lexical check in `resolveFilePathOnVolume`
- * blocks `..` escapes but not symlinks inside the volume that point outside it
- * (for example `link -> /etc/passwd`), which would otherwise be followed when
- * the file is opened. Resolving symlinks here — immediately before the caller
- * reads `filePath` — closes that gap and minimizes the TOCTOU window by handing
- * back the fully resolved path to open.
+ * Open `filePath` and confirm the file that was actually opened resolves to a
+ * location within `volumeMountPath`, returning the open handle to stream from.
  *
- * If the mount or file cannot be resolved (for example the file does not
- * exist), the original `filePath` is returned unchanged so the caller's read
- * surfaces the missing-file error as before — there is nothing a symlink could
- * expose when the path does not resolve to a real file.
- * @return [path safe to read, error message if the resolved path escapes the mount]
+ * The lexical check in `resolveFilePathOnVolume` blocks `..` escapes but not a
+ * symlink inside the volume pointing outside it. Validating a resolved *path*
+ * and then re-opening it by name would still be raceable: an attacker who can
+ * write the volume could swap the file for a symlink between the check and the
+ * open, and `stat`/`createReadStream` follow symlinks. Validating the opened
+ * file descriptor instead closes that time-of-check/time-of-use gap — the read
+ * streams from this same handle, never re-resolving the name. On Linux the real
+ * target of the open descriptor is read from `/proc/self/fd/<fd>`; where that is
+ * unavailable the path is resolved directly as a fallback (ml-pipeline-ui runs
+ * on Linux, where the fd path is used).
+ *
+ * Errors from opening (for example a missing file) propagate to the caller so
+ * existing not-found handling is preserved. On success the caller owns the
+ * returned handle and must close it (streaming from it closes it on completion).
+ * @return [open file handle to read from, error message if the opened file escapes the mount]
  */
-export async function resolveRealPathWithinMount(
+export async function openRealFileWithinMount(
   filePath: string,
   volumeMountPath: string,
-): Promise<[string, string | undefined]> {
-  let realMountPath: string;
-  let realFilePath: string;
+): Promise<[FileHandle | undefined, string | undefined]> {
+  const fileHandle = await fsPromises.open(filePath, 'r');
   try {
-    realMountPath = await fsPromises.realpath(volumeMountPath);
-    realFilePath = await fsPromises.realpath(filePath);
-  } catch {
-    return [filePath, undefined];
+    const realMountPath = await fsPromises.realpath(volumeMountPath);
+    let realOpenedPath: string;
+    try {
+      realOpenedPath = await fsPromises.realpath(`/proc/self/fd/${fileHandle.fd}`);
+    } catch {
+      realOpenedPath = await fsPromises.realpath(filePath);
+    }
+    if (!isPathInsideMount(realOpenedPath, realMountPath)) {
+      await fileHandle.close();
+      return [undefined, `File ${filePath} escapes volume mount ${volumeMountPath} via symlink`];
+    }
+    return [fileHandle, undefined];
+  } catch (err) {
+    await fileHandle.close();
+    throw err;
   }
-  if (!isPathInsideMount(realFilePath, realMountPath)) {
-    return ['', `File ${filePath} escapes volume mount ${volumeMountPath} via symlink`];
-  }
-  return [realFilePath, undefined];
 }
 
 export interface PreviewStreamOptions extends TransformOptions {
