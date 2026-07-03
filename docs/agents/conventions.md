@@ -25,3 +25,11 @@
 - Sign commits with `git commit -s`.
 - Do not add AI agents as commit co-authors.
 - Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for DCO and PR conventions.
+
+## Pull request watch policy
+
+- After you successfully open a pull request (a `create_pull_request` call that
+  succeeds), immediately call `subscribe_pr_activity` for that PR — passing its
+  owner, repo, and number — before ending your turn. This hands the PR to the
+  persistent watcher so review-comment feedback and CI status are tracked and
+  acted on until the PR is merged or closed.
