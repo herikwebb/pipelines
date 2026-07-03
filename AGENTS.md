@@ -47,6 +47,14 @@
 - Never include AI agents (e.g. Claude Code, Copilot, or similar tools) as co-authors on commits. The human author is responsible for the work.
 - See `CONTRIBUTING.md` at the repo root for DCO sign-off requirements and general PR conventions.
 
+### Pull request watch policy (agents and contributors)
+
+- After you successfully open a pull request (a `create_pull_request` call that
+  succeeds), immediately call `subscribe_pr_activity` for that PR — passing its
+  owner, repo, and number — before ending your turn. This hands the PR to the
+  persistent watcher so review-comment feedback and CI status are tracked and
+  acted on until the PR is merged or closed.
+
 ## Baseline architecture
 
 - Start with inspecting the architectural diagram found here `images/kfp-cluster-wide-architecture.drawio.xml` (rendered format can be found here: `images/kfp-cluster-wide-architecture.png`).
