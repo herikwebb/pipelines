@@ -1,0 +1,61 @@
+name: Promote to Upstream
+
+# Manually promote a fork branch to a pull request against the upstream repo
+# (kubeflow/pipelines). The fork's default GITHUB_TOKEN cannot open PRs on
+# upstream, so this uses a human-provided PAT (secrets.UPSTREAM_PAT) with rights
+# to open PRs there. Pair this with the PR Review gate: promote a branch only
+# after its fork PR review check is green (see require_review_pass below).
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Fork branch to promote (becomes the head of the upstream PR)
+        required: true
+        type: string
+      base:
+        description: Upstream base branch (blank = upstream default branch)
+        required: false
+        type: string
+        default: ''
+      title:
+        description: PR title (blank = the branch's last commit subject)
+        required: false
+        type: string
+        default: ''
+      draft:
+        description: Open the upstream PR as a draft
+        required: false
+        type: boolean
+        default: false
+      require_review_pass:
+        description: Require the fork PR's review gate to be green before promoting
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    if: github.repository == 'herikwebb/pipelines'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Promote branch to upstream PR
+        env:
+          UPSTREAM_PAT: ${{ secrets.UPSTREAM_PAT }}
+          UPSTREAM_REPO: kubeflow/pipelines
+          FORK_REPO: ${{ github.repository }}
+          BRANCH: ${{ inputs.branch }}
+          BASE_BRANCH: ${{ inputs.base }}
+          PR_TITLE: ${{ inputs.title }}
+          DRAFT: ${{ inputs.draft }}
+          REQUIRE_REVIEW: ${{ inputs.require_review_pass }}
+        run: bash scripts/promote-upstream.sh
