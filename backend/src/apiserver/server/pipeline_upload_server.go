@@ -399,7 +399,13 @@ func (s *PipelineUploadServer) canUploadVersionedPipeline(r *http.Request, pipel
 		}
 	}
 	if resourceAttributes.Namespace == "" {
-		return nil
+		// Shared pipelines have no namespace of their own. Uploading a shared
+		// pipeline or a new version of one is a write operation and must be
+		// authorized against the KFP system namespace, mirroring canAccessPipeline
+		// in pipeline_server.go. Returning early here would skip authorization
+		// entirely and let any authenticated user create or overwrite shared
+		// pipelines that every namespace can read and run.
+		resourceAttributes.Namespace = common.GetPodNamespace()
 	}
 
 	resourceAttributes.Group = common.RbacPipelinesGroup

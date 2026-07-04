@@ -27,6 +27,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kubeflow/pipelines/backend/src/apiserver/client"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/common"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/list"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/model"
@@ -35,6 +36,7 @@ import (
 	"github.com/kubeflow/pipelines/backend/src/common/util"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	authorizationv1 "k8s.io/api/authorization/v1"
 )
 
 const (
@@ -948,3 +950,80 @@ root:
 schemaVersion: 2.1.0
 sdkVersion: kfp-1.6.5
 `
+
+// requestWithIdentity returns an HTTP request carrying a multi-user identity
+// header, matching what the ingress injects for an authenticated tenant user.
+func requestWithIdentity() *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/apis/v2beta1/pipelines/upload", nil)
+	r.Header.Set(common.GoogleIAPUserIdentityHeader, common.GoogleIAPUserIdentityPrefix+"user@google.com")
+	return r
+}
+
+// TestCanUploadVersionedPipeline_SharedPipeline_Unauthorized is a regression
+// test for the HTTP upload path skipping authorization on shared
+// (empty-namespace) pipelines. Uploading a shared pipeline, or a new version of
+// an existing shared pipeline, is a write and must be authorized against the KFP
+// system namespace just like the gRPC canAccessPipeline path. A user without
+// that permission must be rejected.
+func TestCanUploadVersionedPipeline_SharedPipeline_Unauthorized(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	initEnvVars()
+	clientManager := resource.NewFakeClientManagerOrFatal(util.NewFakeTimeForEpoch())
+	clientManager.SubjectAccessReviewClientFake = client.NewFakeSubjectAccessReviewClientUnauthorized()
+	resourceManager := resource.NewResourceManager(clientManager, &resource.ResourceManagerOptions{CollectMetrics: false})
+	defer clientManager.Close()
+
+	// Create a shared pipeline (empty namespace).
+	sharedPipeline, err := resourceManager.CreatePipeline(&model.Pipeline{Name: "shared-pipeline", Namespace: ""})
+	assert.Nil(t, err)
+
+	server := PipelineUploadServer{resourceManager: resourceManager, options: &PipelineUploadServerOptions{CollectMetrics: false}}
+	r := requestWithIdentity()
+
+	// Creating a brand-new shared pipeline (no pipeline id, empty namespace).
+	err = server.canUploadVersionedPipeline(r, "", &authorizationv1.ResourceAttributes{
+		Namespace: "",
+		Verb:      common.RbacResourceVerbCreate,
+	})
+	assert.NotNil(t, err, "unauthorized user must not create a shared pipeline")
+
+	// Pushing a new version onto an existing shared pipeline.
+	err = server.canUploadVersionedPipeline(r, sharedPipeline.UUID, &authorizationv1.ResourceAttributes{
+		Namespace: "",
+		Verb:      common.RbacResourceVerbCreate,
+	})
+	assert.NotNil(t, err, "unauthorized user must not add a version to a shared pipeline")
+}
+
+// TestCanUploadVersionedPipeline_SharedPipeline_Authorized verifies that a user
+// with create permission in the KFP system namespace is allowed to upload shared
+// pipelines, so the added authorization check does not break the intended flow.
+func TestCanUploadVersionedPipeline_SharedPipeline_Authorized(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	initEnvVars()
+	clientManager := resource.NewFakeClientManagerOrFatal(util.NewFakeTimeForEpoch())
+	resourceManager := resource.NewResourceManager(clientManager, &resource.ResourceManagerOptions{CollectMetrics: false})
+	defer clientManager.Close()
+
+	sharedPipeline, err := resourceManager.CreatePipeline(&model.Pipeline{Name: "shared-pipeline", Namespace: ""})
+	assert.Nil(t, err)
+
+	server := PipelineUploadServer{resourceManager: resourceManager, options: &PipelineUploadServerOptions{CollectMetrics: false}}
+	r := requestWithIdentity()
+
+	err = server.canUploadVersionedPipeline(r, "", &authorizationv1.ResourceAttributes{
+		Namespace: "",
+		Verb:      common.RbacResourceVerbCreate,
+	})
+	assert.Nil(t, err, "authorized user should be allowed to create a shared pipeline")
+
+	err = server.canUploadVersionedPipeline(r, sharedPipeline.UUID, &authorizationv1.ResourceAttributes{
+		Namespace: "",
+		Verb:      common.RbacResourceVerbCreate,
+	})
+	assert.Nil(t, err, "authorized user should be allowed to add a version to a shared pipeline")
+}
