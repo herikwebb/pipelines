@@ -26,5 +26,12 @@
         "commit_hash": "b703a0a24edfcf16d3819c7e1abbf3f619aa5c86",
         "detected_at_pst": "2026-07-02T06:50:00-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/78"
+    },
+    {
+        "title": "Missing authorization on HTTP pipeline upload/upload_version lets any multi-user tenant create and overwrite shared (empty-namespace) pipelines that all namespaces run \u2014 filed, PR to open manually",
+        "status": "active",
+        "commit_hash": "7ab9aa3435df59fe5a8dc1ce207d0803c4dec6ed",
+        "detected_at_pst": "2026-07-04T06:54:00-07:00",
+        "reported_link": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-pipeline-upload-shared-authz-20260704134557-13345?expand=1"
     }
 ]
