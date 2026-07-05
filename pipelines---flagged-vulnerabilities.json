@@ -40,5 +40,12 @@
         "commit_hash": "db1756b40cf1a7ff89f04543471dc4332b5ea015",
         "detected_at_pst": "2026-07-05T06:31:28-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/issues/85"
+    },
+    {
+        "title": "TensorBoard proxy HMAC signing key defaults to the object-store credential MINIO_SECRET_KEY (public default `minio123`), making proxy tokens forgeable \u2014 unauthenticated in-cluster SSRF to arbitrary <label>-service.<label>.svc.cluster.local:80 in default standalone mode (frontend/server/configs.ts)",
+        "status": "active",
+        "commit_hash": "db1756b40cf1a7ff89f04543471dc4332b5ea015",
+        "detected_at_pst": "2026-07-05T06:35:26-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/issues/86"
     }
 ]
