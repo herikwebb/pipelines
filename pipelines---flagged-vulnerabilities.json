@@ -33,5 +33,12 @@
         "commit_hash": "7ab9aa3435df59fe5a8dc1ce207d0803c4dec6ed",
         "detected_at_pst": "2026-07-04T06:54:00-07:00",
         "reported_link": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-pipeline-upload-shared-authz-20260704134557-13345?expand=1"
+    },
+    {
+        "title": "Code injection / RCE in visualization service via unsanitized `source` string-formatted into an executed notebook cell (VisualizationService.CreateVisualization), reachable cross-tenant via the empty-namespace authorization skip",
+        "status": "active",
+        "commit_hash": "db1756b40cf1a7ff89f04543471dc4332b5ea015",
+        "detected_at_pst": "2026-07-05T06:31:28-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/issues/85"
     }
 ]
