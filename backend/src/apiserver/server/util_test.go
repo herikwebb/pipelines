@@ -15,6 +15,10 @@
 package server
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"os"
 	"strings"
 	"testing"
@@ -22,6 +26,37 @@ import (
 	"github.com/kubeflow/pipelines/backend/src/apiserver/common"
 	"github.com/stretchr/testify/assert"
 )
+
+// makeGzipTarball builds a gzip-compressed tarball containing a single entry
+// with the given name and content. Used to construct decompression-bomb inputs
+// whose compressed size is small but decompressed size is large.
+func makeGzipTarball(t *testing.T, name string, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gzipWriter := gzip.NewWriter(&buf)
+	tarWriter := tar.NewWriter(gzipWriter)
+	err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(content))})
+	assert.Nil(t, err)
+	_, err = tarWriter.Write(content)
+	assert.Nil(t, err)
+	assert.Nil(t, tarWriter.Close())
+	assert.Nil(t, gzipWriter.Close())
+	return buf.Bytes()
+}
+
+// makeZip builds a zip archive containing a single entry with the given name
+// and content.
+func makeZip(t *testing.T, name string, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zipWriter := zip.NewWriter(&buf)
+	writer, err := zipWriter.Create(name)
+	assert.Nil(t, err)
+	_, err = writer.Write(content)
+	assert.Nil(t, err)
+	assert.Nil(t, zipWriter.Close())
+	return buf.Bytes()
+}
 
 func TestLoadFile(t *testing.T) {
 	file := "12345"
@@ -75,6 +110,24 @@ func TestDecompressPipelineTarball_EmptyTarball(t *testing.T) {
 	assert.Contains(t, err.Error(), "Not a valid tarball file")
 }
 
+func TestDecompressPipelineTarball_DecompressionBomb(t *testing.T) {
+	// A small, highly compressible archive whose decompressed pipeline.yaml
+	// exceeds MaxFileLength must be rejected without buffering the whole entry.
+	bomb := makeGzipTarball(t, "pipeline.yaml", bytes.Repeat([]byte("a"), common.MaxFileLength+1))
+	assert.Less(t, len(bomb), common.MaxFileLength, "compressed bomb should be small")
+	_, err := DecompressPipelineTarball(bomb)
+	assert.NotNil(t, err)
+	assert.Contains(t, err.Error(), "size too large")
+}
+
+func TestDecompressPipelineTarball_AtSizeLimit(t *testing.T) {
+	content := bytes.Repeat([]byte("a"), common.MaxFileLength)
+	archive := makeGzipTarball(t, "pipeline.yaml", content)
+	decompressed, err := DecompressPipelineTarball(archive)
+	assert.Nil(t, err)
+	assert.Equal(t, content, decompressed)
+}
+
 func TestDecompressPipelineZip(t *testing.T) {
 	zipByte, _ := os.ReadFile("test/arguments_zip/arguments-parameters.zip")
 	pipelineFile, err := DecompressPipelineZip(zipByte)
@@ -82,6 +135,22 @@ func TestDecompressPipelineZip(t *testing.T) {
 
 	expectedPipelineFile, _ := os.ReadFile("test/arguments-parameters.yaml")
 	assert.Equal(t, expectedPipelineFile, pipelineFile)
+}
+
+func TestDecompressPipelineZip_DecompressionBomb(t *testing.T) {
+	bomb := makeZip(t, "pipeline.yaml", bytes.Repeat([]byte("a"), common.MaxFileLength+1))
+	assert.Less(t, len(bomb), common.MaxFileLength, "compressed bomb should be small")
+	_, err := DecompressPipelineZip(bomb)
+	assert.NotNil(t, err)
+	assert.Contains(t, err.Error(), "size too large")
+}
+
+func TestDecompressPipelineZip_AtSizeLimit(t *testing.T) {
+	content := bytes.Repeat([]byte("a"), common.MaxFileLength)
+	archive := makeZip(t, "pipeline.yaml", content)
+	decompressed, err := DecompressPipelineZip(archive)
+	assert.Nil(t, err)
+	assert.Equal(t, content, decompressed)
 }
 
 func TestDecompressPipelineZip_MalformattedZip(t *testing.T) {

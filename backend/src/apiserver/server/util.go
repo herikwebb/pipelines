@@ -24,8 +24,32 @@ import (
 	"io"
 	"strings"
 
+	"github.com/kubeflow/pipelines/backend/src/apiserver/common"
 	"github.com/kubeflow/pipelines/backend/src/common/util"
 )
+
+// readDecompressedFile reads the decompressed contents of a single pipeline
+// archive entry while bounding the amount of data materialized in memory.
+//
+// loadFile only limits the size of the *compressed* upload, so a small archive
+// with a high compression ratio (a decompression bomb) could otherwise expand
+// to many gigabytes here and OOM the shared API server. A legitimate pipeline
+// file is expected to be at most common.MaxFileLength, so anything larger is
+// rejected before the whole entry is buffered.
+func readDecompressedFile(reader io.Reader) ([]byte, error) {
+	decompressedFile, err := io.ReadAll(io.LimitReader(reader, int64(common.MaxFileLength)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(decompressedFile) > common.MaxFileLength {
+		return nil, util.NewInvalidInputError(
+			"Decompressed pipeline file size too large. Maximum supported size: %v bytes. Consider moving large "+
+				"embedded artifacts or notebooks or Python code into a container image or object store.",
+			common.MaxFileLength,
+		)
+	}
+	return decompressedFile, nil
+}
 
 func loadFile(fileReader io.Reader, MaxFileLength int) ([]byte, error) {
 	// TODO(lingqinggan): investigate ways to increase the buffer size, so we don't have to use a loop.
@@ -111,7 +135,7 @@ func DecompressPipelineTarball(compressedFile []byte) ([]byte, error) {
 		}
 	}
 
-	decompressedFile, err := io.ReadAll(tarReader)
+	decompressedFile, err := readDecompressedFile(tarReader)
 	if err != nil {
 		return nil, util.NewInvalidInputErrorWithDetails(err, "Error reading pipeline YAML from the tarball file")
 	}
@@ -144,7 +168,7 @@ func DecompressPipelineZip(compressedFile []byte) ([]byte, error) {
 	if err != nil {
 		return nil, util.NewInvalidInputErrorWithDetails(err, "Error extracting pipeline from the zip file. Failed to read the content")
 	}
-	decompressedFile, err := io.ReadAll(rc)
+	decompressedFile, err := readDecompressedFile(rc)
 	if err != nil {
 		return nil, util.NewInvalidInputErrorWithDetails(err, "Error reading pipeline YAML from the zip file")
 	}
