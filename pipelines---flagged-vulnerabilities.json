@@ -47,5 +47,12 @@
         "commit_hash": "db1756b40cf1a7ff89f04543471dc4332b5ea015",
         "detected_at_pst": "2026-07-05T06:35:26-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/issues/86"
+    },
+    {
+        "title": "Decompression bomb in pipeline archive upload (unbounded io.ReadAll on decompressed .tar.gz/.zip) can OOM the API server (DoS) in backend/src/apiserver/server/util.go",
+        "status": "active",
+        "commit_hash": "1a86c52f5588b1827f2c7fd92830243b11c7cc81",
+        "detected_at_pst": "2026-07-06T06:33:56-07:00",
+        "reported_link": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-pipeline-archive-decompression-bomb-20260706132624-7084?expand=1"
     }
 ]
