@@ -44,7 +44,9 @@ describe('isAllowedDomain', () => {
     expect(isAllowedDomain('https://evil.example/path/to/artifact', '^example\\.com$')).toBe(false);
   });
 
-  it('accepts the default production allowlist for service URLs', () => {
+  it('accepts an explicit allow-all allowlist for service URLs', () => {
+    // `^.*$` is allow-all and must be opted into explicitly; it is no longer the
+    // default (see ALLOWED_ARTIFACT_DOMAIN_REGEX in configs.ts).
     expect(isAllowedDomain('http://ml-pipeline.kubeflow:8888/artifacts', '^.*$')).toBe(true);
   });
 });

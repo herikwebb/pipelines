@@ -65,8 +65,16 @@ export function loadConfigs(argv: string[], env: ProcessEnv): UIConfigs {
     AWS_SSL = 'true',
     /** http/https base URL */
     HTTP_BASE_URL = '',
-    /** By default, allowing access to all domains. Modify this flag to allow querying matching domains */
-    ALLOWED_ARTIFACT_DOMAIN_REGEX = '^.*$',
+    /**
+     * Allowlist regex for hosts the `http`/`https` artifact source may fetch.
+     * Deny by default (`^$` matches only the empty string, so every real host is
+     * rejected): when `HTTP_BASE_URL` is empty the `bucket` query parameter
+     * becomes the request host, so an allow-all default (`^.*$`) turns
+     * `/artifacts/get?source=http` into a server-side request forgery primitive
+     * against in-cluster services. Set this to an explicit host allowlist
+     * (for example `^minio-service$`) to enable http/https artifact retrieval.
+     */
+    ALLOWED_ARTIFACT_DOMAIN_REGEX = '^$',
     /** http/https fetch with this authorization header key (for example: 'Authorization') */
     HTTP_AUTHORIZATION_KEY = '',
     /** http/https fetch with this authorization header value by default when absent in client request at above key */

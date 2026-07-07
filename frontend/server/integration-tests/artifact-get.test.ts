@@ -487,6 +487,7 @@ describe('/artifacts', () => {
           : Promise.reject('Unable to retrieve http artifact.'),
       );
       const configs = loadConfigs(argv, {
+        ALLOWED_ARTIFACT_DOMAIN_REGEX: '^foo\\.bar$',
         HTTP_BASE_URL: 'foo.bar/',
       });
       app = new UIServer(configs);
@@ -513,6 +514,7 @@ describe('/artifacts', () => {
           : Promise.reject('Unable to retrieve http artifact.'),
       );
       const configs = loadConfigs(argv, {
+        ALLOWED_ARTIFACT_DOMAIN_REGEX: '^foo\\.bar$',
         HTTP_BASE_URL: 'foo.bar/',
       });
       app = new UIServer(configs);
@@ -525,6 +527,24 @@ describe('/artifacts', () => {
         headers: {},
         redirect: 'manual',
       });
+    });
+
+    it('denies an attacker-chosen host by default (SSRF guard)', async () => {
+      // With no ALLOWED_ARTIFACT_DOMAIN_REGEX configured and an empty
+      // HTTP_BASE_URL, the `bucket` query parameter becomes the request host.
+      // The default allowlist must deny it so /artifacts/get?source=http cannot
+      // be turned into an SSRF against arbitrary in-cluster services.
+      mockedFetch.mockClear();
+      const configs = loadConfigs(argv, {});
+      app = new UIServer(configs);
+
+      const request = requests(app.app);
+      const res = await request
+        .get('/artifacts/get?source=http&bucket=internal-service&key=latest%2Fsecret')
+        .expect(500);
+      expect(res.text).toBe('Domain not allowed.');
+      // The attacker-chosen host is never fetched.
+      expect(mockedFetch).not.toHaveBeenCalled();
     });
 
     it('does not follow an http redirect that leaves the allowlist', async () => {
@@ -669,6 +689,7 @@ describe('/artifacts', () => {
           : Promise.reject('Unable to retrieve http artifact.'),
       );
       const configs = loadConfigs(argv, {
+        ALLOWED_ARTIFACT_DOMAIN_REGEX: '^foo\\.bar$',
         HTTP_AUTHORIZATION_DEFAULT_VALUE: 'someToken',
         HTTP_AUTHORIZATION_KEY: 'Authorization',
         HTTP_BASE_URL: 'foo.bar/',
@@ -698,6 +719,7 @@ describe('/artifacts', () => {
           : Promise.reject('Unable to retrieve http artifact.'),
       );
       const configs = loadConfigs(argv, {
+        ALLOWED_ARTIFACT_DOMAIN_REGEX: '^foo\\.bar$',
         HTTP_AUTHORIZATION_KEY: 'Authorization',
         HTTP_BASE_URL: 'foo.bar/',
       });
