@@ -54,5 +54,12 @@
         "commit_hash": "1a86c52f5588b1827f2c7fd92830243b11c7cc81",
         "detected_at_pst": "2026-07-06T06:33:56-07:00",
         "reported_link": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-pipeline-archive-decompression-bomb-20260706132624-7084?expand=1"
+    },
+    {
+        "title": "SSRF via http/https artifact source: ml-pipeline-ui artifact proxy fetches an attacker-chosen single-label in-cluster host because ALLOWED_ARTIFACT_DOMAIN_REGEX defaults to allow-all (^.*$) and bucket becomes the host when HTTP_BASE_URL is empty; unauthenticated in standalone (frontend/server/handlers/artifacts.ts) \u2014 filed, PR to open manually",
+        "status": "active",
+        "commit_hash": "178de09d0c70c750cbba48d49ce49fa86d069aec",
+        "detected_at_pst": "2026-07-07T06:34:48-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/issues/89"
     }
 ]
