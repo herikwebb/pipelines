@@ -115,5 +115,18 @@
         "affected_version": "3.14.1",
         "fixed_version": "3.15.0",
         "severity": "medium"
+    },
+    {
+        "title": "mistune 3.2.1 in visualization server vulnerable to 10 advisories (safe_url XSS bypass CVE-2026-59929/CVE-2026-59923, admonition XSS CVE-2026-59926, Include path traversal CVE-2026-59924, quadratic-parse DoS) via nbconvert HTMLExporter \u2014 filed, PR to open manually",
+        "status": "active",
+        "commit_hash": "8569b34658b8df2cf2a644560691d783bb3c4e8e",
+        "detected_at_pst": "2026-07-13T06:23:55-07:00",
+        "reported_link": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:deps/bump-mistune-to-3.3.0-20260713132257-12227?expand=1",
+        "cve_id": "CVE-2026-59929",
+        "ghsa_id": "GHSA-qfrw-5rxm-mhh2",
+        "package": "pypi:mistune",
+        "affected_version": "3.2.1",
+        "fixed_version": "3.3.0",
+        "severity": "medium"
     }
 ]
