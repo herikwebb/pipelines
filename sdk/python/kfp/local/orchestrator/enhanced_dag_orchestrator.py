@@ -15,6 +15,7 @@
 """Enhanced DAG orchestrator with support for dsl.Condition and
 dsl.ParallelFor."""
 
+import ast
 import concurrent.futures
 import enum
 import logging
@@ -195,13 +196,93 @@ class ConditionEvaluator:
                 'max': max,
             }
 
-            result = eval(safe_condition, allowed_names, {})
+            result = ConditionEvaluator._safe_eval(safe_condition,
+                                                   allowed_names)
             return bool(result)
 
         except Exception as e:
             logging.warning(
                 f'Condition evaluation failed for "{condition}": {e}')
             return False
+
+    # AST node types permitted inside a condition expression. This is an
+    # allowlist: comparisons, boolean logic, literals, and a small set of
+    # scalar conversion calls are all a compiled dsl.Condition ever needs
+    # once pipeline-channel references have been substituted with literals.
+    # Attribute access, subscripting, comprehensions, lambdas and every other
+    # construct are rejected so a crafted condition cannot escape the
+    # restricted namespace (e.g. via ().__class__.__base__.__subclasses__()).
+    _ALLOWED_EVAL_NODES = (
+        ast.Expression,
+        ast.BoolOp,
+        ast.And,
+        ast.Or,
+        ast.UnaryOp,
+        ast.Not,
+        ast.USub,
+        ast.UAdd,
+        ast.Compare,
+        ast.Eq,
+        ast.NotEq,
+        ast.Lt,
+        ast.LtE,
+        ast.Gt,
+        ast.GtE,
+        ast.In,
+        ast.NotIn,
+        ast.Is,
+        ast.IsNot,
+        ast.Constant,
+        ast.Name,
+        ast.Load,
+        ast.Call,
+        ast.List,
+        ast.Tuple,
+    )
+    _ALLOWED_EVAL_CALL_NAMES = frozenset(
+        {'int', 'float', 'str', 'bool', 'len', 'min', 'max'})
+
+    @staticmethod
+    def _safe_eval(expression: str, names: Dict[str, Any]) -> Any:
+        """Safely evaluates a boolean condition expression.
+
+        Parses ``expression`` and rejects any construct outside a strict
+        allowlist before evaluating it against ``names``. This replaces a
+        plain ``eval`` so an attacker-controlled ``triggerPolicy.condition``
+        in an untrusted pipeline cannot achieve arbitrary code execution on
+        the host that runs the pipeline locally.
+
+        Args:
+            expression: The condition expression, with pipeline-channel and
+                CEL references already substituted with literals.
+            names: The restricted namespace exposed to the expression.
+
+        Returns:
+            The evaluated result.
+
+        Raises:
+            ValueError: If the expression contains a disallowed construct.
+        """
+        parsed = ast.parse(expression, mode='eval')
+        for node in ast.walk(parsed):
+            if not isinstance(node,
+                              ConditionEvaluator._ALLOWED_EVAL_NODES):
+                raise ValueError(
+                    f'Disallowed expression element: {type(node).__name__}')
+            if isinstance(node, ast.Call):
+                if not isinstance(node.func, ast.Name) or (
+                        node.func.id
+                        not in ConditionEvaluator._ALLOWED_EVAL_CALL_NAMES):
+                    raise ValueError('Disallowed function call in condition')
+                if node.keywords:
+                    raise ValueError(
+                        'Keyword arguments are not allowed in condition')
+            if isinstance(node, ast.Name) and (
+                    node.id not in names and node.id
+                    not in ConditionEvaluator._ALLOWED_EVAL_CALL_NAMES):
+                raise ValueError(f'Unknown name in condition: {node.id}')
+        compiled = compile(parsed, '<condition>', 'eval')
+        return eval(compiled, {'__builtins__': {}}, names)
 
 
 class ParallelExecutor:
