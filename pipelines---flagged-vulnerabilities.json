@@ -61,5 +61,12 @@
         "commit_hash": "178de09d0c70c750cbba48d49ce49fa86d069aec",
         "detected_at_pst": "2026-07-07T06:34:48-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/issues/89"
+    },
+    {
+        "title": "Arbitrary code execution via eval() of attacker-controlled dsl.Condition (triggerPolicy.condition) in the kfp.local enhanced DAG orchestrator; escapes DockerRunner container isolation when running an untrusted pipeline locally",
+        "status": "active",
+        "commit_hash": "b5fff0fc75eaccb8a70e3d1c8efabb553eba40ff",
+        "detected_at_pst": "2026-07-17T06:26:32-07:00",
+        "reported_link": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-local-condition-eval-rce-20260717132513-11339?expand=1"
     }
 ]
