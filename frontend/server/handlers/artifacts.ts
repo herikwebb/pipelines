@@ -310,6 +310,23 @@ export function getArtifactsHandler({
     }
     const effectiveProviderInfo = allowProviderSecrets ? providerInfo : '';
 
+    // Security: the object-store endpoint carried in `providerInfo` is
+    // attacker-controllable via the query string. Unlike the http/https
+    // artifact sources (guarded by isAllowedDomain below), the s3/minio
+    // provider endpoint was never checked, letting a request point the
+    // server's outbound object-store fetch at an arbitrary in-cluster or
+    // link-local host and stream the response back (SSRF). Subject the
+    // provider endpoint to the same domain allowlist so operators can
+    // constrain it consistently across every artifact source.
+    if ((source === 's3' || source === 'minio') && effectiveProviderInfo) {
+      const parsedProviderInfo = parseJSONString<S3ProviderInfo>(effectiveProviderInfo);
+      const providerEndpoint = parsedProviderInfo?.Params?.endpoint;
+      if (providerEndpoint && !isAllowedDomain(providerEndpoint, allowedDomain)) {
+        res.status(400).send('Artifact store endpoint is not allowed');
+        return;
+      }
+    }
+
     let client: MinioClient;
     switch (source) {
       case 'gcs':

@@ -375,6 +375,42 @@ describe('/artifacts', () => {
       expect(mockedGetK8sSecret).toBeCalledTimes(2);
     });
 
+    it('rejects an s3 provider endpoint that is not in the allowed domain (SSRF guard)', async () => {
+      const mockedMinioClient: Mock = minio.Client as any;
+      const mockedGetK8sSecret: Mock = getK8sSecret as any;
+      mockedGetK8sSecret.mockResolvedValue('someSecret');
+      // Operator restricts artifact endpoints to their object store only.
+      const configs = loadConfigs(argv, {
+        ALLOWED_ARTIFACT_DOMAIN_REGEX: '^mys3\\.ns\\.svc\\.cluster\\.local$',
+      });
+      app = new UIServer(configs);
+      const request = requests(app.app);
+      // Attacker points the object-store endpoint at a link-local host to
+      // exfiltrate the response via the server (SSRF).
+      const providerInfo = {
+        Params: {
+          accessKeyKey: 'someSecret',
+          disableSSL: 'true',
+          endpoint: 'http://169.254.169.254:80',
+          fromEnv: 'false',
+          region: 'auto',
+          secretKeyKey: 'someSecret',
+          secretName: 'my-secret',
+        },
+        Provider: 's3',
+      };
+      const namespace = 'kubeflow';
+      await request
+        .get(
+          `/artifacts/get?source=s3&bucket=ml-pipeline&key=hello%2Fworld.txt&namespace=${namespace}&providerInfo=${JSON.stringify(
+            providerInfo,
+          )}`,
+        )
+        .expect(400);
+      // The outbound object-store fetch must never be constructed.
+      expect(mockedMinioClient).not.toBeCalled();
+    });
+
     it('responds with artifact if source is gcs, and creds are sourced from Provider Configs', async () => {
       const artifactContent = 'hello world';
       const mockedGetGCSClient: Mock = getGCSClient as any;
