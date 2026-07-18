@@ -68,5 +68,12 @@
         "commit_hash": "b5fff0fc75eaccb8a70e3d1c8efabb553eba40ff",
         "detected_at_pst": "2026-07-17T06:26:32-07:00",
         "reported_link": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-local-condition-eval-rce-20260717132513-11339?expand=1"
+    },
+    {
+        "title": "SSRF via attacker-controlled s3/minio providerInfo.endpoint on /artifacts/get: full host:port outbound fetch (incl. 169.254.169.254 and arbitrary ports) bypasses the artifact domain allowlist that only guards http/https; unauthenticated in default standalone (frontend/server/handlers/artifacts.ts)",
+        "status": "active",
+        "commit_hash": "3460971aa5df4213b02482e1e3b4c6120529e473",
+        "detected_at_pst": "2026-07-18T06:49:40-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/issues/97"
     }
 ]
