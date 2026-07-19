@@ -50,9 +50,15 @@ func (s *VisualizationServer) CreateVisualizationV1(ctx context.Context, request
 		return nil, err
 	}
 
-	// In multi-user mode, we allow empty namespace in which case we fall back to use the visualization service in system namespace.
-	// See getVisualizationServiceURL() for details.
-	if common.IsMultiUserMode() && len(request.Namespace) > 0 {
+	// In multi-user mode a namespace is required and the caller must be authorized to create
+	// visualizations in it. An empty namespace must not skip authorization: getVisualizationServiceURL()
+	// falls back to the shared system-namespace visualization service for an empty namespace, so gating
+	// the authorization check on len(Namespace) > 0 let any caller reach that shared service without an
+	// access review, defeating tenant isolation.
+	if common.IsMultiUserMode() {
+		if len(request.Namespace) == 0 {
+			return nil, util.NewInvalidInputError("A namespace must be provided for visualizations in multi-user mode.")
+		}
 		resourceAttributes := &authorizationv1.ResourceAttributes{
 			Namespace:   request.Namespace,
 			Verb:        common.RbacResourceVerbCreate,

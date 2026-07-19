@@ -340,3 +340,34 @@ func TestCreateVisualization_Unauthenticated(t *testing.T) {
 		"there is no user identity header",
 	)
 }
+
+func TestCreateVisualization_EmptyNamespaceRejectedInMultiUserMode(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	userIdentity := "user@google.com"
+	md := metadata.New(map[string]string{common.GoogleIAPUserIdentityHeader: common.GoogleIAPUserIdentityPrefix + userIdentity})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	clientManager := resource.NewFakeClientManagerOrFatal(util.NewFakeTimeForEpoch())
+	resourceManager := resource.NewResourceManager(clientManager, &resource.ResourceManagerOptions{CollectMetrics: false})
+	defer clientManager.Close()
+
+	server := &VisualizationServer{
+		resourceManager: resourceManager,
+	}
+	visualization := &apiv1beta1.Visualization{
+		Type:      apiv1beta1.Visualization_ROC_CURVE,
+		Source:    "gs://ml-pipeline/roc/data.csv",
+		Arguments: "{}",
+	}
+
+	// An empty namespace in multi-user mode must be rejected before the request is forwarded to the
+	// shared system-namespace visualization service, otherwise authorization is skipped entirely.
+	request := &apiv1beta1.CreateVisualizationRequest{
+		Visualization: visualization,
+	}
+	_, err := server.CreateVisualizationV1(ctx, request)
+	assert.NotNil(t, err)
+	assert.Contains(t, err.Error(), "A namespace must be provided")
+}
