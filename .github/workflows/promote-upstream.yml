@@ -18,6 +18,15 @@ on:
         required: false
         type: string
         default: ''
+      fork_base:
+        description: >-
+          Fork base the PR branch was cut from (e.g. master). When set, promote a
+          derived branch = upstream tip + only the commits the branch adds over
+          this base, so fork-only automation never reaches the upstream PR. Blank
+          promotes the branch as-is (it must already sit cleanly on upstream).
+        required: false
+        type: string
+        default: ''
       title:
         description: PR title (blank = the branch's last commit subject)
         required: false
@@ -55,6 +64,7 @@ jobs:
           FORK_REPO: ${{ github.repository }}
           BRANCH: ${{ inputs.branch }}
           BASE_BRANCH: ${{ inputs.base }}
+          FORK_BASE: ${{ inputs.fork_base }}
           PR_TITLE: ${{ inputs.title }}
           DRAFT: ${{ inputs.draft }}
           REQUIRE_REVIEW: ${{ inputs.require_review_pass }}

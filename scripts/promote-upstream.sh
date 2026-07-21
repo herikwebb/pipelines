@@ -21,6 +21,14 @@ PR_TITLE="${PR_TITLE:-}"
 PR_BODY="${PR_BODY:-}"
 DRAFT="${DRAFT:-false}"
 REQUIRE_REVIEW="${REQUIRE_REVIEW:-true}"
+# When set (e.g. 'master'), promote a *derived* branch = upstream tip + only the
+# commits BRANCH adds over FORK_BASE, instead of BRANCH itself. The fork's
+# default branch carries fork-only automation (pr-review.yml, this script,
+# AGENTS.md, ...) that a fix branch cut from it would otherwise drag into the
+# upstream diff; deriving keeps just the fix commits on a clean upstream base.
+FORK_BASE="${FORK_BASE:-}"
+# Name prefix for the derived branch pushed back to the fork.
+DERIVED_PREFIX="${DERIVED_PREFIX:-promote}"
 
 if [[ -z "${UPSTREAM_PAT:-}" ]]; then
   echo "UPSTREAM_PAT is not set. Add a PAT with rights to open PRs on ${UPSTREAM_REPO} as a secret." >&2
@@ -39,6 +47,50 @@ echo "Promoting ${FORK_REPO}:${BRANCH} -> ${UPSTREAM_REPO}:${BASE_BRANCH}"
 if ! git ls-remote --exit-code --heads "https://github.com/${FORK_REPO}.git" "${BRANCH}" >/dev/null 2>&1; then
   echo "Branch '${BRANCH}' does not exist on ${FORK_REPO}." >&2
   exit 1
+fi
+
+# The review gate is keyed off the fork PR, which lives on the branch as passed
+# in — keep that name even after BRANCH is redirected to a derived branch below.
+REVIEW_BRANCH="${BRANCH}"
+
+# Optionally derive a clean upstream-based branch before promoting. This is the
+# rebase/cherry-pick step promotion needs and that the compare API alone cannot
+# do: replay only the commits BRANCH adds over FORK_BASE onto the current
+# upstream tip, dropping the fork-only automation that FORK_BASE carries.
+if [[ -n "${FORK_BASE}" ]]; then
+  FORK_GIT="https://x-access-token:${UPSTREAM_PAT}@github.com/${FORK_REPO}.git"
+  git config user.name "${GIT_AUTHOR_NAME:-Herik Webb}"
+  git config user.email "${GIT_AUTHOR_EMAIL:-herikwebb@users.noreply.github.com}"
+
+  git fetch --no-tags "https://github.com/${UPSTREAM_REPO}.git" "${BASE_BRANCH}"
+  UPSTREAM_TIP="$(git rev-parse FETCH_HEAD)"
+  git fetch --no-tags "${FORK_GIT}" "${FORK_BASE}"
+  FORK_BASE_SHA="$(git rev-parse FETCH_HEAD)"
+  git fetch --no-tags "${FORK_GIT}" "${BRANCH}"
+  BRANCH_SHA="$(git rev-parse FETCH_HEAD)"
+
+  # The fix commits are exactly what BRANCH adds over FORK_BASE, oldest first.
+  mapfile -t FIX_COMMITS < <(git rev-list --reverse "${FORK_BASE_SHA}..${BRANCH_SHA}")
+  if [[ "${#FIX_COMMITS[@]}" -eq 0 ]]; then
+    echo "Refusing to promote: '${BRANCH}' has no commits beyond '${FORK_BASE}' to derive." >&2
+    exit 1
+  fi
+
+  DERIVED_BRANCH="${DERIVED_PREFIX}/${BRANCH}"
+  echo "Deriving ${DERIVED_BRANCH} = ${UPSTREAM_REPO}:${BASE_BRANCH} + ${#FIX_COMMITS[@]} fix commit(s) from ${BRANCH}."
+  git checkout -B "${DERIVED_BRANCH}" "${UPSTREAM_TIP}"
+  if ! git cherry-pick "${FIX_COMMITS[@]}"; then
+    git cherry-pick --abort || true
+    echo "Fix commits do not apply cleanly onto ${UPSTREAM_REPO}:${BASE_BRANCH}." >&2
+    echo "Rebase the fix onto the current upstream tip and retry." >&2
+    exit 1
+  fi
+  # The derived branch is fully script-managed and regenerated on every run, so
+  # a plain force is safe and avoids force-with-lease failing on a fresh ref.
+  git push --force "${FORK_GIT}" "HEAD:${DERIVED_BRANCH}"
+  echo "Pushed derived branch ${FORK_REPO}:${DERIVED_BRANCH}."
+  # Promote the derived branch from here on.
+  BRANCH="${DERIVED_BRANCH}"
 fi
 
 # Server-side compare of the cross-fork range. status is one of
@@ -73,10 +125,10 @@ fi
 # The PR Review workflow fails its check on a non-APPROVE verdict, so an
 # all-green 'review' check means the automated reviewer signed off.
 if [[ "${REQUIRE_REVIEW}" == "true" ]]; then
-  PR_NUMBER="$(gh pr list --repo "${FORK_REPO}" --head "${BRANCH}" --state open \
+  PR_NUMBER="$(gh pr list --repo "${FORK_REPO}" --head "${REVIEW_BRANCH}" --state open \
     --json number --jq '.[0].number // empty')"
   if [[ -z "${PR_NUMBER}" ]]; then
-    echo "require_review_pass is true but no open PR on ${FORK_REPO} targets '${BRANCH}'." >&2
+    echo "require_review_pass is true but no open PR on ${FORK_REPO} targets '${REVIEW_BRANCH}'." >&2
     echo "Open a fork PR for this branch (so the review gate runs) or re-run with require_review_pass=false." >&2
     exit 1
   fi
