@@ -76,6 +76,30 @@ if [[ -n "${FORK_BASE}" ]]; then
     exit 1
   fi
 
+  # Default the PR title/body from the PRIMARY (first, oldest) fix commit rather
+  # than the branch tip. With more than one commit GitHub falls back to the
+  # branch name for the title and an empty description; deriving from the main
+  # fix commit keeps the upstream PR meaningful and encapsulates every commit.
+  PRIMARY_SHA="${FIX_COMMITS[0]}"
+  if [[ -z "${PR_TITLE}" ]]; then
+    PR_TITLE="$(git log -1 --format='%s' "${PRIMARY_SHA}")"
+  fi
+  if [[ -z "${PR_BODY}" ]]; then
+    PR_BODY="$(
+      printf 'Description of your changes:\n\n'
+      git log -1 --format='%b' "${PRIMARY_SHA}"
+      if [[ "${#FIX_COMMITS[@]}" -gt 1 ]]; then
+        printf '\nCommits in this PR:\n'
+        for commit in "${FIX_COMMITS[@]}"; do
+          printf -- '- %s\n' "$(git log -1 --format='%s' "${commit}")"
+        done
+      fi
+      printf '\nChecklist:\n'
+      printf -- '- [x] You have signed off your commits\n'
+      printf -- '- [x] The PR title follows the repository title convention\n'
+    )"
+  fi
+
   DERIVED_BRANCH="${DERIVED_PREFIX}/${BRANCH}"
   echo "Deriving ${DERIVED_BRANCH} = ${UPSTREAM_REPO}:${BASE_BRANCH} + ${#FIX_COMMITS[@]} fix commit(s) from ${BRANCH}."
   git checkout -B "${DERIVED_BRANCH}" "${UPSTREAM_TIP}"
