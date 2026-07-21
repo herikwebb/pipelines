@@ -411,6 +411,79 @@ describe('/artifacts', () => {
       expect(mockedMinioClient).not.toBeCalled();
     });
 
+    it('rejects a minio provider endpoint that is not in the allowed domain (SSRF guard)', async () => {
+      const mockedMinioClient: Mock = minio.Client as any;
+      const mockedGetK8sSecret: Mock = getK8sSecret as any;
+      mockedGetK8sSecret.mockResolvedValue('someSecret');
+      const configs = loadConfigs(argv, {
+        ALLOWED_ARTIFACT_DOMAIN_REGEX: '^minio-service\\.kubeflow$',
+      });
+      app = new UIServer(configs);
+      const request = requests(app.app);
+      const providerInfo = {
+        Params: {
+          accessKeyKey: 'someSecret',
+          disableSSL: 'true',
+          endpoint: 'http://169.254.169.254:80',
+          fromEnv: 'false',
+          region: 'auto',
+          secretKeyKey: 'someSecret',
+          secretName: 'my-secret',
+        },
+        Provider: 'minio',
+      };
+      const namespace = 'kubeflow';
+      await request
+        .get(
+          `/artifacts/get?source=minio&bucket=ml-pipeline&key=hello%2Fworld.txt&namespace=${namespace}&providerInfo=${JSON.stringify(
+            providerInfo,
+          )}`,
+        )
+        .expect(400);
+      expect(mockedMinioClient).not.toBeCalled();
+    });
+
+    it('allows a provider endpoint that matches a restrictive allowlist', async () => {
+      const mockedMinioClient: Mock = minio.Client as any;
+      const mockedGetK8sSecret: Mock = getK8sSecret as any;
+      mockedGetK8sSecret.mockResolvedValue('someSecret');
+      // Restrictive allowlist that still permits the operator's own object store.
+      const configs = loadConfigs(argv, {
+        ALLOWED_ARTIFACT_DOMAIN_REGEX: '^mys3\\.ns\\.svc\\.cluster\\.local$',
+      });
+      app = new UIServer(configs);
+      const request = requests(app.app);
+      const providerInfo = {
+        Params: {
+          accessKeyKey: 'someSecret',
+          disableSSL: 'false',
+          endpoint: 'https://mys3.ns.svc.cluster.local:1234',
+          fromEnv: 'false',
+          region: 'auto',
+          secretKeyKey: 'someSecret',
+          secretName: 'my-secret',
+        },
+        Provider: 's3',
+      };
+      const namespace = 'kubeflow';
+      await request
+        .get(
+          `/artifacts/get?source=s3&bucket=ml-pipeline&key=hello%2Fworld.txt&namespace=${namespace}&providerInfo=${JSON.stringify(
+            providerInfo,
+          )}`,
+        )
+        .expect(200, artifactContent);
+      // The allowed endpoint passes the guard and the client is constructed.
+      expect(mockedMinioClient).toBeCalledWith({
+        accessKey: 'someSecret',
+        endPoint: 'mys3.ns.svc.cluster.local',
+        port: 1234,
+        region: 'auto',
+        secretKey: 'someSecret',
+        useSSL: true,
+      });
+    });
+
     it('responds with artifact if source is gcs, and creds are sourced from Provider Configs', async () => {
       const artifactContent = 'hello world';
       const mockedGetGCSClient: Mock = getGCSClient as any;
