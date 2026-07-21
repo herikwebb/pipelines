@@ -74,7 +74,7 @@
         "status": "active",
         "commit_hash": "3460971aa5df4213b02482e1e3b4c6120529e473",
         "detected_at_pst": "2026-07-18T06:49:40-07:00",
-        "reported_link": "https://github.com/herikwebb/pipelines/issues/97"
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/98"
     },
     {
         "title": "Missing authorization on CreateVisualizationV1: an empty request namespace skips the IsAuthorized SubjectAccessReview in multi-user mode and routes the attacker-controlled visualization request to the shared system-namespace visualization service",
