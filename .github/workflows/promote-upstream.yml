@@ -28,7 +28,14 @@ on:
         type: string
         default: ''
       title:
-        description: PR title (blank = the branch's last commit subject)
+        description: PR title (blank = the primary fix commit subject)
+        required: false
+        type: string
+        default: ''
+      body:
+        description: >-
+          PR description (blank = derived from the primary fix commit, a list of
+          included commits, and the sign-off / title-convention checklist).
         required: false
         type: string
         default: ''
@@ -66,6 +73,7 @@ jobs:
           BASE_BRANCH: ${{ inputs.base }}
           FORK_BASE: ${{ inputs.fork_base }}
           PR_TITLE: ${{ inputs.title }}
+          PR_BODY: ${{ inputs.body }}
           DRAFT: ${{ inputs.draft }}
           REQUIRE_REVIEW: ${{ inputs.require_review_pass }}
         run: bash scripts/promote-upstream.sh
