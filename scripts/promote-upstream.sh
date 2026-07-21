@@ -79,7 +79,10 @@ if [[ -n "${FORK_BASE}" ]]; then
   DERIVED_BRANCH="${DERIVED_PREFIX}/${BRANCH}"
   echo "Deriving ${DERIVED_BRANCH} = ${UPSTREAM_REPO}:${BASE_BRANCH} + ${#FIX_COMMITS[@]} fix commit(s) from ${BRANCH}."
   git checkout -B "${DERIVED_BRANCH}" "${UPSTREAM_TIP}"
-  if ! git cherry-pick "${FIX_COMMITS[@]}"; then
+  # -s adds a Signed-off-by trailer for the configured (submitter) identity so
+  # the promoted commits satisfy upstream's DCO check. Skip commits that already
+  # carry a matching trailer so re-runs don't duplicate it.
+  if ! git cherry-pick --signoff "${FIX_COMMITS[@]}"; then
     git cherry-pick --abort || true
     echo "Fix commits do not apply cleanly onto ${UPSTREAM_REPO}:${BASE_BRANCH}." >&2
     echo "Rebase the fix onto the current upstream tip and retry." >&2
