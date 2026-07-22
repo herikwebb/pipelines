@@ -82,5 +82,12 @@
         "commit_hash": "2c9c19cd454568180f2d6710627334528214c461",
         "detected_at_pst": "2026-07-19T06:29:14-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/issues/19"
+    },
+    {
+        "title": "Stored XSS: pipeline version code_source_url rendered unsanitized into an anchor href (Version source link) in PipelineVersionCard / PipelineDetailsV1; any upload-capable user plants a non-http(s) (e.g. javascript:) scheme that executes in the ml-pipeline-ui origin on click \u2014 filed fork PR, upstream via private channel",
+        "status": "active",
+        "commit_hash": "7a20c635d3c778591e254fda0a81e05a5b0b5505",
+        "detected_at_pst": "2026-07-22T06:27:33-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/100"
     }
 ]
