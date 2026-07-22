@@ -457,6 +457,22 @@ export function generateS3ArtifactUrl(s3Uri: string): string | undefined {
   });
 }
 
+/**
+ * Returns the given URL only when it uses a browsable, safe scheme (http/https),
+ * otherwise undefined. Used to gate user-supplied values (for example a pipeline
+ * version's code_source_url) before placing them in an anchor href, so that
+ * untrusted schemes such as `javascript:` are never rendered as clickable links.
+ *
+ * @param url Candidate URL, typically user-supplied.
+ * @returns The URL when it starts with http:// or https://, otherwise undefined.
+ */
+export function sanitizeExternalHref(url?: string): string | undefined {
+  if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+    return url;
+  }
+  return undefined;
+}
+
 export function buildQuery(queriesMap: { [key: string]: string | number | undefined }): string {
   const queryContent = Object.entries(queriesMap)
     .filter((entry): entry is [string, string | number] => entry[1] != null)
