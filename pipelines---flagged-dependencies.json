@@ -128,5 +128,18 @@
         "affected_version": "3.2.1",
         "fixed_version": "3.3.0",
         "severity": "medium"
+    },
+    {
+        "title": "js-yaml 4.2.0 in frontend vulnerable to GHSA-52cp-r559-cp3m (npm, high) \u2014 quadratic merge-key DoS; supersedes the earlier 4.1.1->4.2.0 fix (advisory affects <4.3.0)",
+        "status": "active",
+        "cve_id": "",
+        "ghsa_id": "GHSA-52cp-r559-cp3m",
+        "package": "npm:js-yaml",
+        "affected_version": "4.2.0",
+        "fixed_version": "4.3.0",
+        "severity": "high",
+        "commit_hash": "2deeb0751fd87db6492ec8d2a8da452b50bd64b8",
+        "detected_at_pst": "2026-07-23T06:20:12-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/102"
     }
 ]
