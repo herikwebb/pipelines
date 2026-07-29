@@ -21,6 +21,7 @@ import {
   getServerNamespace,
 } from './k8s-helper.js';
 import { createMinioClient, MinioRequestConfig, getObjectStream } from './minio-helper.js';
+import { isAllowedDomain } from './handlers/domain-checker.js';
 import * as JsYaml from 'js-yaml';
 
 export interface PartialArgoWorkflow {
@@ -334,6 +335,24 @@ export async function getPodLogsMinioRequestConfigfromWorkflow(
   }
 
   const { host, port } = urlSplit(s3Artifact.endpoint, s3Artifact.insecure);
+
+  // Security (SSRF): the artifact-repository endpoint is resolved from the Argo
+  // Workflow status, which in multi-user mode can be influenced by a
+  // namespace-owning tenant via a namespace-local `artifact-repositories`
+  // configmap (the same per-namespace source honored by
+  // getKeyFormatFromArtifactRepositories). Without validation the shared
+  // ml-pipeline-ui server would build an object-store client aimed at an
+  // attacker-chosen host:port and stream the response back to the caller. Gate
+  // the endpoint host through the same artifact-domain allowlist the artifact
+  // handlers apply (ALLOWED_ARTIFACT_DOMAIN_REGEX, default `^.*$` so configured
+  // deployments are unaffected), and refuse the read otherwise.
+  const allowedDomain = process.env.ALLOWED_ARTIFACT_DOMAIN_REGEX || '^.*$';
+  if (!isAllowedDomain(host, allowedDomain)) {
+    throw new Error(
+      'Artifact repository endpoint host is not in the allowed artifact domain list.',
+    );
+  }
+
   // Security: Only read the object-store credential Secret from the server's own
   // namespace. In multi-user deployments the run namespace is a customer/user
   // namespace, and the ml-pipeline-ui service account may not read Secrets there;

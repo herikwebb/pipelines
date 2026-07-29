@@ -497,5 +497,146 @@ describe('workflow-helper', () => {
         useSSL: false,
       });
     });
+
+    it('rejects a workflow-status endpoint host outside the artifact domain allowlist (SSRF)', async () => {
+      // The endpoint is resolved from the Argo Workflow status, which a
+      // namespace-owning tenant can influence via a namespace-local
+      // artifact-repositories configmap. A restricted ALLOWED_ARTIFACT_DOMAIN_REGEX
+      // must prevent the shared server from building a client toward — and
+      // streaming a response from — an attacker-chosen host.
+      const sampleWorkflow = {
+        apiVersion: 'argoproj.io/v1alpha1',
+        kind: 'Workflow',
+        status: {
+          artifactRepositoryRef: {
+            artifactRepository: {
+              archiveLogs: true,
+              s3: {
+                bucket: 'bucket',
+                endpoint: 'attacker.evil.example:9000',
+                insecure: true,
+                key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/some-artifact.csv',
+              },
+            },
+          },
+          nodes: {
+            'workflow-name-abc': {
+              outputs: {
+                artifacts: [
+                  {
+                    name: 'main-logs',
+                    s3: {
+                      key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/main.log',
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      };
+
+      const mockedGetArgoWorkflow: Mock = getArgoWorkflow as any;
+      mockedGetArgoWorkflow.mockResolvedValueOnce(sampleWorkflow);
+
+      const mockedGetServerNamespace: Mock = getServerNamespace as any;
+      mockedGetServerNamespace.mockReturnValue('kubeflow');
+
+      const mockedClient: Mock = MinioClient as any;
+      mockedClient.mockClear();
+      MinioClient.prototype.getObject = vi.fn() as any;
+
+      const previousAllowedDomain = process.env.ALLOWED_ARTIFACT_DOMAIN_REGEX;
+      process.env.ALLOWED_ARTIFACT_DOMAIN_REGEX = '^seaweedfs\\.kubeflow$';
+
+      try {
+        await expect(
+          getPodLogsStreamFromWorkflow(
+            'workflow-name-system-container-impl-abc',
+            '2024-07-09',
+            'kubeflow',
+          ),
+        ).rejects.toThrow('not in the allowed artifact domain list');
+      } finally {
+        process.env.ALLOWED_ARTIFACT_DOMAIN_REGEX = previousAllowedDomain;
+      }
+
+      // No object-store client is constructed and no outbound object read is made.
+      expect(mockedClient).not.toBeCalled();
+    });
+
+    it('allows a workflow-status endpoint host that matches the artifact domain allowlist', async () => {
+      const sampleWorkflow = {
+        apiVersion: 'argoproj.io/v1alpha1',
+        kind: 'Workflow',
+        status: {
+          artifactRepositoryRef: {
+            artifactRepository: {
+              archiveLogs: true,
+              s3: {
+                bucket: 'bucket',
+                endpoint: 'seaweedfs.kubeflow',
+                insecure: true,
+                key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/some-artifact.csv',
+              },
+            },
+          },
+          nodes: {
+            'workflow-name-abc': {
+              outputs: {
+                artifacts: [
+                  {
+                    name: 'main-logs',
+                    s3: {
+                      key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/main.log',
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      };
+
+      const mockedGetArgoWorkflow: Mock = getArgoWorkflow as any;
+      mockedGetArgoWorkflow.mockResolvedValueOnce(sampleWorkflow);
+
+      const mockedGetServerNamespace: Mock = getServerNamespace as any;
+      mockedGetServerNamespace.mockReturnValue('kubeflow');
+
+      const mockedGetK8sSecret: Mock = getK8sSecret as any;
+      mockedGetK8sSecret.mockResolvedValue('someSecret');
+
+      const previousAllowedDomain = process.env.ALLOWED_ARTIFACT_DOMAIN_REGEX;
+      process.env.ALLOWED_ARTIFACT_DOMAIN_REGEX = '^seaweedfs\\.kubeflow$';
+
+      const objStream = new PassThrough();
+      const mockedClient: Mock = MinioClient as any;
+      mockedClient.mockClear();
+      MinioClient.prototype.getObject = vi.fn().mockResolvedValueOnce(objStream) as any;
+      objStream.end('some fake logs.');
+
+      try {
+        await getPodLogsStreamFromWorkflow(
+          'workflow-name-system-container-impl-abc',
+          '2024-07-09',
+          'kubeflow',
+        );
+      } finally {
+        process.env.ALLOWED_ARTIFACT_DOMAIN_REGEX = previousAllowedDomain;
+      }
+
+      // The allowed endpoint host is accepted and the object-store client is
+      // constructed toward it (the outbound read then proceeds as normal).
+      expect(mockedClient).toBeCalledTimes(1);
+      expect(mockedClient).toBeCalledWith(
+        expect.objectContaining({ endPoint: 'seaweedfs.kubeflow', port: 80, useSSL: false }),
+      );
+      const clientInstance = mockedClient.mock.results[0].value;
+      expect(clientInstance.getObject).toBeCalledWith(
+        'bucket',
+        'prefix/workflow-name/workflow-name-system-container-impl-abc/main.log',
+      );
+    });
   });
 });
