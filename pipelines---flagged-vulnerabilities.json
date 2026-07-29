@@ -97,5 +97,12 @@
         "detected_at_pst": "2026-07-24T06:33:50-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/104",
         "primary_location": "frontend/server/workflow-helper.ts"
+    },
+    {
+        "title": "SSRF via unvalidated, tenant-influenced Argo artifact-repository s3.endpoint in the ml-pipeline-ui pod-log archive fallback (getPodLogsMinioRequestConfigfromWorkflow): a namespace-owning multi-user tenant seeds a namespace-local artifact-repositories configmap so the resolved workflow-status endpoint points at an attacker host:port, and the shared frontend builds an object-store client toward it and streams the response back (also leaks the object-store access-key ID) \u2014 filed fork PR, upstream via private channel",
+        "status": "active",
+        "commit_hash": "345a7cd31054d45595322cefe27d73ad7b9f1f10",
+        "detected_at_pst": "2026-07-29T06:33:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/106"
     }
 ]
