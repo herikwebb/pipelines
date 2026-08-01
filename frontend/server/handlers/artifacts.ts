@@ -528,7 +528,7 @@ async function previewDirectorySummary(
   const prefix = key.endsWith('/') ? key : `${key}/`;
   const summary = await summarizeDirectoryUnderPrefix(client, bucket, prefix);
   if (!summary) {
-    res.status(404).send(`No objects found at ${bucket}/${key}`);
+    res.status(404).type('text/plain').send(`No objects found at ${bucket}/${key}`);
     return;
   }
   const baseName = key.replace(/\/+$/, '').split('/').pop() || 'artifact';
@@ -551,7 +551,7 @@ async function streamDirectoryAsTarGz(
   const iterator = listObjectsUnderPrefix(client, bucket, prefix);
   const first = await iterator.next();
   if (first.done) {
-    res.status(404).send(`No objects found at ${bucket}/${key}`);
+    res.status(404).type('text/plain').send(`No objects found at ${bucket}/${key}`);
     return;
   }
 
