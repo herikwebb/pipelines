@@ -141,5 +141,18 @@
         "commit_hash": "2deeb0751fd87db6492ec8d2a8da452b50bd64b8",
         "detected_at_pst": "2026-07-23T06:20:12-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/102"
+    },
+    {
+        "title": "golang.org/x/crypto/openpgp unmaintained/unsafe (GO-2026-5932) in root go.mod \u2014 no fix available; vulnerable openpgp package not imported anywhere (indirect dep, unreachable)",
+        "status": "no_fix_available",
+        "commit_hash": "93d56b5044b045f3448349e1463c2511f3fdca0f",
+        "detected_at_pst": "2026-08-02T06:49:43-07:00",
+        "reported_link": "",
+        "cve_id": "",
+        "ghsa_id": "GO-2026-5932",
+        "package": "go:golang.org/x/crypto",
+        "affected_version": "0.54.0",
+        "fixed_version": "",
+        "severity": "medium"
     }
 ]
