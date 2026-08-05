@@ -29,6 +29,7 @@ import (
 	apiv2beta1 "github.com/kubeflow/pipelines/backend/api/v2beta1/go_client"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/client"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/common"
+	"github.com/kubeflow/pipelines/backend/src/apiserver/model"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/resource"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/template"
 	"github.com/kubeflow/pipelines/backend/src/common/util"
@@ -503,6 +504,55 @@ func TestCreateRunV1_Unauthorized(t *testing.T) {
 		err.Error(),
 		"PermissionDenied: User 'user@google.com' is not authorized with reason",
 	)
+}
+
+func TestCanAccessReferencedPipeline_Multiuser(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	md := metadata.New(map[string]string{common.GoogleIAPUserIdentityHeader: common.GoogleIAPUserIdentityPrefix + "user@google.com"})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	// newManagerWithPipeline returns a resource manager holding a single pipeline
+	// in the given namespace plus one pipeline version, along with their IDs. When
+	// authorized is false the SubjectAccessReview client denies every request.
+	newManagerWithPipeline := func(namespace string, authorized bool) (*resource.ResourceManager, string, string) {
+		initEnvVars()
+		clientManager := resource.NewFakeClientManagerOrFatal(util.NewFakeTimeForEpoch())
+		if !authorized {
+			clientManager.SubjectAccessReviewClientFake = client.NewFakeSubjectAccessReviewClientUnauthorized()
+		}
+		resourceManager := resource.NewResourceManager(clientManager, &resource.ResourceManagerOptions{CollectMetrics: false})
+		pipeline, err := resourceManager.CreatePipeline(&model.Pipeline{Name: "p1", Namespace: namespace})
+		assert.Nil(t, err)
+		pipelineVersion, err := resourceManager.CreatePipelineVersion(&model.PipelineVersion{
+			Name:         "p1",
+			PipelineId:   pipeline.UUID,
+			PipelineSpec: model.LargeText(testWorkflow.ToStringForStore()),
+		})
+		assert.Nil(t, err)
+		return resourceManager, pipeline.UUID, pipelineVersion.UUID
+	}
+
+	// A caller without access to another namespace's private pipeline is denied
+	// when referencing it by version ID or by pipeline ID.
+	rmPrivate, privatePipelineID, privateVersionID := newManagerWithPipeline("ns2", false)
+	assert.Error(t, canAccessReferencedPipeline(ctx, rmPrivate, &model.PipelineSpec{PipelineVersionId: privateVersionID}))
+	assert.Error(t, canAccessReferencedPipeline(ctx, rmPrivate, &model.PipelineSpec{PipelineId: privatePipelineID}))
+
+	// Shared (empty-namespace) pipelines remain readable by any authenticated
+	// user, even one the SubjectAccessReview would deny.
+	rmShared, sharedPipelineID, sharedVersionID := newManagerWithPipeline("", false)
+	assert.NoError(t, canAccessReferencedPipeline(ctx, rmShared, &model.PipelineSpec{PipelineVersionId: sharedVersionID}))
+	assert.NoError(t, canAccessReferencedPipeline(ctx, rmShared, &model.PipelineSpec{PipelineId: sharedPipelineID}))
+
+	// An inline manifest references no existing pipeline and needs no pipeline
+	// authorization at this layer.
+	assert.NoError(t, canAccessReferencedPipeline(ctx, rmShared, &model.PipelineSpec{}))
+
+	// A caller authorized for the owning namespace is allowed.
+	rmAuthorized, _, authorizedVersionID := newManagerWithPipeline("ns2", true)
+	assert.NoError(t, canAccessReferencedPipeline(ctx, rmAuthorized, &model.PipelineSpec{PipelineVersionId: authorizedVersionID}))
 }
 
 func TestCreateRunV1_Multiuser(t *testing.T) {

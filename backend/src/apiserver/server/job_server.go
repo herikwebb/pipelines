@@ -117,6 +117,11 @@ func (s *BaseJobServer) createJob(ctx context.Context, job *model.Job) (*model.J
 	if err := s.canAccessJob(ctx, "", resourceAttributes); err != nil {
 		return nil, util.Wrapf(err, "Failed to create a recurring run due to authorization error. Check if you have write permission to namespace %s", job.Namespace)
 	}
+	// Authorize access to a referenced pipeline so a caller cannot embed and run
+	// another namespace's private pipeline by referencing its version UUID.
+	if err := canAccessReferencedPipeline(ctx, s.resourceManager, &job.PipelineSpec); err != nil {
+		return nil, util.Wrap(err, "Failed to create a recurring run due to authorization error on the referenced pipeline")
+	}
 	return s.resourceManager.CreateJob(ctx, job)
 }
 
