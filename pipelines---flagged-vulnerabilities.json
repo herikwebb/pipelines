@@ -118,5 +118,19 @@
         "commit_hash": "93d56b5044b045f3448349e1463c2511f3fdca0f",
         "detected_at_pst": "2026-08-02T06:58:57-07:00",
         "reported_link": "https://github.com/kubeflow/pipelines/issues/4790"
+    },
+    {
+        "title": "Missing authorization on the referenced pipeline version during run/recurring-run creation lets a multi-user tenant embed and execute another namespace's private pipeline by referencing its version UUID (cross-tenant IDOR); disclosure of the private pipeline spec via read-back \u2014 reviewed fork PR open, upstream PR to open manually",
+        "status": "active",
+        "commit_hash": "d8fcff5967dade74f80f3c5d91245d55cab5578d",
+        "detected_at_pst": "2026-08-05T07:13:43-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/110"
+    },
+    {
+        "title": "Arbitrary host-file disclosure escaping DockerRunner isolation via dsl.importer(download_to_workspace=True) with a file:// or bare-path artifact_uri: the host-side importer (importer_handler._copy_local_artifact_to_workspace) copies an arbitrary host path into the container-mounted workspace, readable by untrusted task code; same untrusted-local-pipeline + DockerRunner precondition as the already-filed dsl.Condition eval RCE \u2014 recorded, no separate fix (gray-area/subsumed, no clean fix without changing download_to_workspace semantics)",
+        "status": "active",
+        "commit_hash": "d8fcff5967dade74f80f3c5d91245d55cab5578d",
+        "detected_at_pst": "2026-08-05T07:13:43-07:00",
+        "reported_link": ""
     }
 ]
