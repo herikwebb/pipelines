@@ -702,30 +702,35 @@ func canAccessReferencedPipeline(ctx context.Context, resourceManager *resource.
 		// Skip authz if not multi-user mode.
 		return nil
 	}
-	pipelineVersionId := pipelineSpec.PipelineVersionId
-	pipelineId := pipelineSpec.PipelineId
+	pipelineVersionID := pipelineSpec.PipelineVersionId
+	pipelineID := pipelineSpec.PipelineId
 	// The pipeline/version may instead be encoded in the full pipeline name.
-	if pipelineVersionId == "" && pipelineId == "" && pipelineSpec.PipelineName != "" {
+	if pipelineVersionID == "" && pipelineID == "" && pipelineSpec.PipelineName != "" {
 		resourceNames := common.ParseResourceIdsFromFullName(pipelineSpec.PipelineName)
-		pipelineVersionId = resourceNames["PipelineVersionId"]
-		pipelineId = resourceNames["PipelineId"]
+		pipelineVersionID = resourceNames["PipelineVersionId"]
+		pipelineID = resourceNames["PipelineId"]
 	}
-	// Resolve the owning pipeline of a referenced version so we can authorize
-	// against the pipeline's namespace.
-	if pipelineId == "" && pipelineVersionId != "" {
-		pipelineVersion, err := resourceManager.GetPipelineVersion(pipelineVersionId)
+	// A referenced version determines the authoritative owning pipeline. Resolve
+	// it first (run and recurring-run creation prioritize the version id when both
+	// are present) so a caller cannot pair an accessible pipeline id with another
+	// namespace's private version to authorize against the wrong pipeline.
+	if pipelineVersionID != "" {
+		pipelineVersion, err := resourceManager.GetPipelineVersion(pipelineVersionID)
 		if err != nil {
-			return util.Wrapf(err, "Failed to authorize access to the referenced pipeline version %s", pipelineVersionId)
+			return util.Wrapf(err, "Failed to authorize access to the referenced pipeline version %s", pipelineVersionID)
 		}
-		pipelineId = pipelineVersion.PipelineId
+		if pipelineID != "" && pipelineVersion.PipelineId != "" && pipelineID != pipelineVersion.PipelineId {
+			return util.NewInvalidInputError("Pipeline version %s does not belong to pipeline %s", pipelineVersionID, pipelineID)
+		}
+		pipelineID = pipelineVersion.PipelineId
 	}
-	if pipelineId == "" {
+	if pipelineID == "" {
 		// No existing pipeline is referenced (inline manifest); nothing to authorize here.
 		return nil
 	}
-	pipeline, err := resourceManager.GetPipeline(pipelineId)
+	pipeline, err := resourceManager.GetPipeline(pipelineID)
 	if err != nil {
-		return util.Wrapf(err, "Failed to authorize access to the referenced pipeline %s", pipelineId)
+		return util.Wrapf(err, "Failed to authorize access to the referenced pipeline %s", pipelineID)
 	}
 	// Shared pipelines (empty namespace) are readable by any authenticated user.
 	if resourceManager.IsEmptyNamespace(pipeline.Namespace) {

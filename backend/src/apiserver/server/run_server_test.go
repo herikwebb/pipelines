@@ -550,6 +550,26 @@ func TestCanAccessReferencedPipeline_Multiuser(t *testing.T) {
 	// authorization at this layer.
 	assert.NoError(t, canAccessReferencedPipeline(ctx, rmShared, &model.PipelineSpec{}))
 
+	// Pairing an accessible pipeline ID with another namespace's private version
+	// ID must not authorize against the accessible pipeline: the referenced version
+	// is resolved first and its owning pipeline governs authorization. Build one
+	// manager holding both a shared pipeline and a private ns2 pipeline.
+	initEnvVars()
+	mixedClientManager := resource.NewFakeClientManagerOrFatal(util.NewFakeTimeForEpoch())
+	mixedClientManager.SubjectAccessReviewClientFake = client.NewFakeSubjectAccessReviewClientUnauthorized()
+	mixedRM := resource.NewResourceManager(mixedClientManager, &resource.ResourceManagerOptions{CollectMetrics: false})
+	sharedPipeline, err := mixedRM.CreatePipeline(&model.Pipeline{Name: "shared", Namespace: ""})
+	assert.Nil(t, err)
+	_, err = mixedRM.CreatePipelineVersion(&model.PipelineVersion{Name: "shared", PipelineId: sharedPipeline.UUID, PipelineSpec: model.LargeText(testWorkflow.ToStringForStore())})
+	assert.Nil(t, err)
+	mixedClientManager.UpdateUUID(util.NewFakeUUIDGeneratorOrFatal(NonDefaultFakeUUID, nil))
+	mixedRM = resource.NewResourceManager(mixedClientManager, &resource.ResourceManagerOptions{CollectMetrics: false})
+	privatePipeline, err := mixedRM.CreatePipeline(&model.Pipeline{Name: "private", Namespace: "ns2"})
+	assert.Nil(t, err)
+	privateVersion, err := mixedRM.CreatePipelineVersion(&model.PipelineVersion{Name: "private", PipelineId: privatePipeline.UUID, PipelineSpec: model.LargeText(testWorkflow.ToStringForStore())})
+	assert.Nil(t, err)
+	assert.Error(t, canAccessReferencedPipeline(ctx, mixedRM, &model.PipelineSpec{PipelineId: sharedPipeline.UUID, PipelineVersionId: privateVersion.UUID}))
+
 	// A caller authorized for the owning namespace is allowed.
 	rmAuthorized, _, authorizedVersionID := newManagerWithPipeline("ns2", true)
 	assert.NoError(t, canAccessReferencedPipeline(ctx, rmAuthorized, &model.PipelineSpec{PipelineVersionId: authorizedVersionID}))
