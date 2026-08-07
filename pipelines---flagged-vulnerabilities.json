@@ -132,5 +132,12 @@
         "commit_hash": "d8fcff5967dade74f80f3c5d91245d55cab5578d",
         "detected_at_pst": "2026-08-05T07:13:43-07:00",
         "reported_link": ""
+    },
+    {
+        "title": "Cross-tenant execution-cache read and poisoning: the v1 cache mutating webhook computes a namespace-agnostic cache key (generateCacheKeyFromTemplate) and GetExecutionCache matches on that key alone, while the MutatingWebhookConfiguration has no namespaceSelector \u2014 in multi-user mode a tenant can read another tenant's cached ExecutionOutput and poison shared cachedb entries other tenants consume (legacy v1 path only; v2 driver cache is namespace-scoped)",
+        "status": "active",
+        "commit_hash": "f7c59fc73f3967298709858dd626aa5d246f06d9",
+        "detected_at_pst": "2026-08-07T06:49:45-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/114"
     }
 ]
