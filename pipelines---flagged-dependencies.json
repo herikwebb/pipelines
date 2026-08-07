@@ -154,5 +154,18 @@
         "affected_version": "0.54.0",
         "fixed_version": "",
         "severity": "medium"
+    },
+    {
+        "title": "js-yaml 4.3.0 in frontend and frontend/server vulnerable to CVE-2026-59870 (GHSA-5p4m-2wfm-xmqj, npm) \u2014 high-severity quadratic !!omap resolution DoS on user-supplied pipeline YAML",
+        "status": "active",
+        "commit_hash": "f7c59fc73f3967298709858dd626aa5d246f06d9",
+        "detected_at_pst": "2026-08-07T06:37:59-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/112",
+        "cve_id": "CVE-2026-59870",
+        "ghsa_id": "GHSA-5p4m-2wfm-xmqj",
+        "package": "npm:js-yaml",
+        "affected_version": "4.3.0",
+        "fixed_version": "4.3.1",
+        "severity": "high"
     }
 ]
