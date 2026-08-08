@@ -139,5 +139,12 @@
         "commit_hash": "f7c59fc73f3967298709858dd626aa5d246f06d9",
         "detected_at_pst": "2026-08-07T06:49:45-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/114"
+    },
+    {
+        "title": "Stored XSS in ml-pipeline-ui artifact proxy: /artifacts/get serves raw, user-controlled artifact bytes inline with a renderable/MIME-sniffable Content-Type (res.send() defaults to text/html for GCS; minio/s3/http/volume pipe with no Content-Type) and no nosniff/Content-Disposition/CSP, so an HTML/script artifact opened via the same-origin \"View\" link executes in the ml-pipeline-ui session; distinct from the reflected key-error XSS and the code_source_url href XSS",
+        "status": "active",
+        "commit_hash": "1630f8063b3434217f54da67aea221b910ea238b",
+        "detected_at_pst": "2026-08-08T06:43:06-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/116"
     }
 ]
