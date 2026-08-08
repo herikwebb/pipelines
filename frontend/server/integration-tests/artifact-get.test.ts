@@ -102,6 +102,30 @@ describe('/artifacts', () => {
       });
     });
 
+    it('serves raw artifacts with hardening headers so they cannot render on the UI origin (security)', async () => {
+      // Artifact bytes are untrusted user content. An HTML artifact opened via
+      // the same-origin "View" link must download, not execute as a document in
+      // the KFP UI session (stored XSS). The raw single-object response must be
+      // a non-renderable type, non-sniffable, and marked as an attachment.
+      const configs = loadConfigs(argv, {
+        MINIO_ACCESS_KEY: 'minio',
+        MINIO_HOST: 'seaweedfs',
+        MINIO_NAMESPACE: 'kubeflow',
+        MINIO_PORT: '9000',
+        MINIO_SECRET_KEY: 'minio123',
+        MINIO_SSL: 'false',
+      });
+      app = new UIServer(configs);
+
+      const request = requests(app.app);
+      const res = await request
+        .get('/artifacts/get?source=minio&bucket=ml-pipeline&key=hello%2Fworld.txt')
+        .expect(200);
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.headers['content-disposition']).toContain('attachment');
+      expect(res.headers['content-disposition']).toContain('world.txt');
+    });
+
     it('responds with artifact if source is AWS S3, and creds are sourced from Env', async () => {
       const mockedMinioClient: Mock = minio.Client as any;
       const configs = loadConfigs(argv, {});

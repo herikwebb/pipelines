@@ -310,6 +310,23 @@ export function getArtifactsHandler({
     }
     const effectiveProviderInfo = allowProviderSecrets ? providerInfo : '';
 
+    // Security: artifact bytes are untrusted, user-controlled content. Never let a
+    // browser render them as an active document on the KFP UI origin. Serving an
+    // artifact inline with a renderable/sniffable Content-Type (Express defaults
+    // res.send() to text/html, and piped objects carry no type at all) means an
+    // HTML artifact opened via the same-origin "View" link executes script in the
+    // ml-pipeline-ui session (stored XSS). Marking every artifact response as an
+    // attachment forces a download instead of an inline render on navigation, and
+    // nosniff blocks MIME-sniffing on the typeless streaming paths. Inline previews
+    // are unaffected: they are read via fetch(), which ignores Content-Disposition.
+    // Handlers returning an intentionally typed download (the tar.gz directory
+    // extract) override Content-Disposition afterwards; the nosniff guard still holds.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Disposition',
+      buildAttachmentDisposition(key.split(/[\\/]/).pop() || 'artifact'),
+    );
+
     let client: MinioClient;
     switch (source) {
       case 'gcs':
