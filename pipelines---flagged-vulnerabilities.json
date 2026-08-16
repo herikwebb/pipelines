@@ -146,5 +146,12 @@
         "commit_hash": "1630f8063b3434217f54da67aea221b910ea238b",
         "detected_at_pst": "2026-08-08T06:43:06-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/116"
+    },
+    {
+        "title": "Privilege escalation via unsanitized TensorBoard Viewer podTemplateSpec: the viewer controller renders a tenant-supplied v1.PodTemplateSpec into a Deployment verbatim (only Containers[0] name/image/args/ports overwritten), letting any namespace user with create on viewers.kubeflow.org request hostPath volumes, privileged/capability containers, host namespaces, or an arbitrary serviceAccountName \u2014 node breakout / cross-identity escalation bypassing pipeline pod PSS hardening; no validating webhook",
+        "status": "active",
+        "commit_hash": "fa58f6535e174f8eddaf45eabbacf26c67abb2c4",
+        "detected_at_pst": "2026-08-16T06:41:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/118"
     }
 ]
