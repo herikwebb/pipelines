@@ -30,6 +30,7 @@ import (
 	viewerV1beta1 "github.com/kubeflow/pipelines/backend/src/crd/pkg/apis/viewer/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -44,6 +45,13 @@ import (
 const viewerTargetPort = 6006
 
 const defaultTensorflowImage = "tensorflow/tensorflow:1.13.2"
+
+// tensorboardCommand is the entrypoint the controller forces on the viewer
+// container. Pinning the command keeps a standard image from running an
+// unexpected entrypoint and overrides any caller-supplied command; it is
+// defense-in-depth, not a trust boundary, because the image itself is
+// caller-selectable (see hardenViewerPodSpec for the threat model).
+const tensorboardCommand = "tensorboard"
 
 // Reconciler implements reconcile.Reconciler for the Viewer CRD.
 type Reconciler struct {
@@ -128,13 +136,31 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 				utilruntime.HandleError(fmt.Errorf("error creating deployment: %v", createErr))
 				return reconcile.Result{}, createErr
 			}
+			glog.Infof("Created new deployment with spec: %+v", dpl)
 		} else {
 			// Some other error.
 			utilruntime.HandleError(err)
 			return reconcile.Result{}, err
 		}
+	} else if metav1.IsControlledBy(foundDpl, view) {
+		// Re-enforce the hardened pod spec on a Deployment this Viewer already
+		// owns, so one created before this control loop cannot retain unsafe
+		// fields. Only owned Deployments are touched, so a Viewer whose derived
+		// name collides with an unrelated workload cannot mutate it.
+		if err := r.hardenExistingDeployment(foundDpl); err != nil {
+			utilruntime.HandleError(fmt.Errorf("error hardening existing deployment: %v", err))
+			return reconcile.Result{}, err
+		}
+	} else {
+		// A Deployment with the derived name exists but is not owned by this
+		// Viewer. Do not touch the unrelated workload and, critically, do not
+		// publish a Service/route that could point at it. Stop here instead.
+		err := fmt.Errorf(
+			"deployment %s/%s already exists and is not owned by viewer %q; refusing to publish a route to it",
+			foundDpl.Namespace, foundDpl.Name, view.Name)
+		utilruntime.HandleError(err)
+		return reconcile.Result{}, err
 	}
-	glog.Infof("Created new deployment with spec: %+v", dpl)
 
 	// Set up a service for the deployment above.
 	svc := serviceFrom(view, dpl.Name)
@@ -154,15 +180,59 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 				utilruntime.HandleError(fmt.Errorf("error creating service: %v", createErr))
 				return reconcile.Result{}, createErr
 			}
+			glog.Infof("Created new service with spec: %+v", svc)
 		} else {
 			// Some other error.
 			utilruntime.HandleError(err)
 			return reconcile.Result{}, err
 		}
+	} else if metav1.IsControlledBy(foundSvc, view) {
+		// Reconcile the route-defining fields of a Service this Viewer owns so a
+		// drifted selector or mapping is corrected.
+		if err := r.reconcileExistingService(foundSvc, svc); err != nil {
+			utilruntime.HandleError(fmt.Errorf("error reconciling existing service: %v", err))
+			return reconcile.Result{}, err
+		}
+	} else {
+		// A Service with the derived name exists but is not owned by this Viewer.
+		// Do not treat the Viewer as reconciled against a route we do not control.
+		err := fmt.Errorf(
+			"service %s/%s already exists and is not owned by viewer %q; refusing to publish a route to it",
+			foundSvc.Namespace, foundSvc.Name, view.Name)
+		utilruntime.HandleError(err)
+		return reconcile.Result{}, err
 	}
-	glog.Infof("Created new service with spec: %+v", svc)
 
 	return reconcile.Result{}, nil
+}
+
+// reconcileExistingService brings the route-defining fields of a Viewer-owned
+// Service (selector, ports, and the Ambassador mapping annotation) back to the
+// desired state, updating only when one of them has drifted so already-correct
+// Services are not needlessly rewritten.
+func (r *Reconciler) reconcileExistingService(found, desired *corev1.Service) error {
+	changed := false
+	if !equality.Semantic.DeepEqual(found.Spec.Selector, desired.Spec.Selector) {
+		found.Spec.Selector = desired.Spec.Selector
+		changed = true
+	}
+	if !equality.Semantic.DeepEqual(found.Spec.Ports, desired.Spec.Ports) {
+		found.Spec.Ports = desired.Spec.Ports
+		changed = true
+	}
+	const ambassadorAnnotation = "getambassador.io/config"
+	if found.Annotations[ambassadorAnnotation] != desired.Annotations[ambassadorAnnotation] {
+		if found.Annotations == nil {
+			found.Annotations = map[string]string{}
+		}
+		found.Annotations[ambassadorAnnotation] = desired.Annotations[ambassadorAnnotation]
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	glog.Infof("Reconciling existing viewer service %s/%s", found.Namespace, found.Name)
+	return r.Update(context.Background(), found)
 }
 
 func setPodSpecForTensorboard(view *viewerV1beta1.Viewer, s *corev1.PodSpec) {
@@ -173,8 +243,10 @@ func setPodSpecForTensorboard(view *viewerV1beta1.Viewer, s *corev1.PodSpec) {
 	c := &s.Containers[0]
 	c.Name = view.Name + "-pod"
 	c.Image = view.Spec.TensorboardSpec.TensorflowImage
+	// Pin the entrypoint to tensorboard so a caller-chosen image cannot run its
+	// own entrypoint; hardenViewerContainers re-affirms this on every path.
+	c.Command = []string{tensorboardCommand}
 	c.Args = []string{
-		"tensorboard",
 		fmt.Sprintf("--logdir=%s", view.Spec.TensorboardSpec.LogDir),
 		fmt.Sprintf("--path_prefix=/tensorboard/%s/", view.Name),
 	}
@@ -233,7 +305,194 @@ func deploymentFrom(view *viewerV1beta1.Viewer) (*appsv1.Deployment, error) {
 		return nil, fmt.Errorf("unknown viewer type: %q", view.Spec.Type)
 	}
 
+	hardenViewerPodSpec(&dpl.Spec.Template.Spec)
+
 	return dpl, nil
+}
+
+func boolPtr(v bool) *bool { return &v }
+
+// hardenExistingDeployment re-applies the pod-spec hardening to a Deployment
+// that already exists for a Viewer and updates it only when the hardening
+// actually changed a field. This repairs Deployments created before the
+// hardening was in place (or by an older controller) without triggering
+// pointless rollouts on already-safe Deployments.
+func (r *Reconciler) hardenExistingDeployment(dpl *appsv1.Deployment) error {
+	original := dpl.Spec.Template.Spec.DeepCopy()
+	hardenViewerPodSpec(&dpl.Spec.Template.Spec)
+	if equality.Semantic.DeepEqual(original, &dpl.Spec.Template.Spec) {
+		return nil
+	}
+	glog.Infof("Re-hardening existing viewer deployment %s/%s", dpl.Namespace, dpl.Name)
+	return r.Update(context.Background(), dpl)
+}
+
+// hardenViewerPodSpec neutralizes the security-sensitive fields of a
+// caller-supplied pod template. Anyone able to create a Viewer controls
+// spec.podTemplateSpec verbatim, and the controller renders it into a
+// Deployment in the caller's namespace, so an unsanitized template would let a
+// namespace-scoped user escalate onto the node (host-path volumes, host ports,
+// privileged or capability-granting containers, host namespaces, Windows
+// HostProcess containers), assume another identity (serviceAccountName), or run
+// arbitrary code via extra/init containers, lifecycle hooks, or exec probes —
+// privileges that the pipeline pod hardening otherwise denies. A viewer only
+// ever runs a single TensorBoard container, so caller-supplied init and
+// additional containers are dropped; ordinary fields on the remaining container
+// (persistent-volume mounts, resources, env) are left untouched.
+//
+// Threat model: the container image is intentionally caller-selectable (users
+// choose a TensorBoard/TensorFlow version, and the UI exposes it). Running a
+// chosen image in this hardened, non-privileged pod under the namespace-default
+// service account is equivalent to what the tenant can already do through
+// pipeline runs and Argo workflows, so it is not an escalation and this function
+// does not attempt to restrict the image. The purpose here is to prevent
+// escalation BEYOND that baseline: host access, identity assumption, and
+// arbitrary sidecar/lifecycle/probe execution.
+func hardenViewerPodSpec(spec *corev1.PodSpec) {
+	spec.HostNetwork = false
+	spec.HostPID = false
+	spec.HostIPC = false
+	// Force the namespace default service account so a viewer cannot run under a
+	// more privileged identity, and do not mount its token: TensorBoard does not
+	// call the Kubernetes API, and the caller-selectable image could otherwise
+	// read or exfiltrate the default service account token.
+	spec.ServiceAccountName = ""
+	spec.DeprecatedServiceAccount = ""
+	spec.AutomountServiceAccountToken = boolPtr(false)
+	// Drop pod-level Windows options (e.g. HostProcess) that grant host access.
+	if spec.SecurityContext != nil {
+		spec.SecurityContext.WindowsOptions = nil
+	}
+	// A viewer serves a single TensorBoard container. Drop caller-supplied init
+	// and extra containers so they cannot run arbitrary images or commands.
+	spec.InitContainers = nil
+	if len(spec.Containers) > 1 {
+		spec.Containers = spec.Containers[:1]
+	}
+
+	droppedVolumes := make(map[string]bool)
+	keptVolumes := spec.Volumes[:0]
+	for i := range spec.Volumes {
+		v := spec.Volumes[i]
+		// Host-path volumes expose the node filesystem.
+		if v.HostPath != nil {
+			droppedVolumes[v.Name] = true
+			continue
+		}
+		// Strip service-account-token projections so the caller cannot mount the
+		// default SA token even though automount is disabled. If that empties a
+		// projected volume, drop it entirely.
+		if v.Projected != nil {
+			v.Projected.Sources = dropServiceAccountTokenSources(v.Projected.Sources)
+			if len(v.Projected.Sources) == 0 {
+				droppedVolumes[v.Name] = true
+				continue
+			}
+		}
+		keptVolumes = append(keptVolumes, v)
+	}
+	spec.Volumes = keptVolumes
+	if len(spec.Volumes) == 0 {
+		spec.Volumes = nil
+	}
+
+	hardenViewerContainers(spec.InitContainers, droppedVolumes)
+	hardenViewerContainers(spec.Containers, droppedVolumes)
+}
+
+// dropServiceAccountTokenSources removes ServiceAccountToken projections from a
+// projected volume's source list, leaving any other (configMap, secret,
+// downwardAPI) sources intact.
+func dropServiceAccountTokenSources(sources []corev1.VolumeProjection) []corev1.VolumeProjection {
+	kept := sources[:0]
+	for _, s := range sources {
+		if s.ServiceAccountToken != nil {
+			continue
+		}
+		kept = append(kept, s)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
+}
+
+func hardenViewerContainers(containers []corev1.Container, droppedVolumes map[string]bool) {
+	for i := range containers {
+		c := &containers[i]
+		// Enforce the escalation-preventing settings on every container, even one
+		// that supplied no securityContext, so Kubernetes' permissive defaults
+		// cannot leave privilege escalation enabled.
+		if c.SecurityContext == nil {
+			c.SecurityContext = &corev1.SecurityContext{}
+		}
+		sc := c.SecurityContext
+		sc.Privileged = boolPtr(false)
+		sc.AllowPrivilegeEscalation = boolPtr(false)
+		sc.ProcMount = nil
+		// Windows HostProcess containers share the host; deny them.
+		sc.WindowsOptions = nil
+		// Strip any added Linux capabilities while preserving defensive drops the
+		// template may have declared (e.g. drop: ["ALL"]).
+		if sc.Capabilities != nil {
+			sc.Capabilities.Add = nil
+			if len(sc.Capabilities.Drop) == 0 {
+				sc.Capabilities = nil
+			}
+		}
+		// Force the tensorboard entrypoint, overriding any caller-supplied command
+		// (defense-in-depth; the image itself is caller-selectable, see the
+		// threat model on hardenViewerPodSpec), and drop lifecycle hooks and
+		// probes, any of which can carry an exec handler that would run beyond the
+		// pinned command. This also repairs Deployments created before this
+		// hardening was in place. A leading "tensorboard" arg left by older
+		// controllers (which passed it as args[0]) is trimmed to avoid duplication.
+		c.Command = []string{tensorboardCommand}
+		if len(c.Args) > 0 && c.Args[0] == tensorboardCommand {
+			c.Args = c.Args[1:]
+		}
+		c.Lifecycle = nil
+		c.LivenessProbe = nil
+		c.ReadinessProbe = nil
+		c.StartupProbe = nil
+		// Host ports bind on the node even when host networking is disabled.
+		for j := range c.Ports {
+			c.Ports[j].HostPort = 0
+		}
+		if len(droppedVolumes) == 0 {
+			continue
+		}
+		c.VolumeMounts = filterVolumeMounts(c.VolumeMounts, droppedVolumes)
+		c.VolumeDevices = filterVolumeDevices(c.VolumeDevices, droppedVolumes)
+	}
+}
+
+func filterVolumeMounts(mounts []corev1.VolumeMount, dropped map[string]bool) []corev1.VolumeMount {
+	kept := mounts[:0]
+	for _, m := range mounts {
+		if dropped[m.Name] {
+			continue
+		}
+		kept = append(kept, m)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
+}
+
+func filterVolumeDevices(devices []corev1.VolumeDevice, dropped map[string]bool) []corev1.VolumeDevice {
+	kept := devices[:0]
+	for _, d := range devices {
+		if dropped[d.Name] {
+			continue
+		}
+		kept = append(kept, d)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
 }
 
 const mappingTpl = `
