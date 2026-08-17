@@ -153,5 +153,12 @@
         "commit_hash": "fa58f6535e174f8eddaf45eabbacf26c67abb2c4",
         "detected_at_pst": "2026-08-16T06:41:00-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/118"
+    },
+    {
+        "title": "Cross-namespace workflow counting in the multi-user ScheduledWorkflow controller: WorkflowClient.List/ExecutionInformer.List count active/completed Argo Workflows by label selector only with no namespace scope, so a tenant's decoy workflows (bearing the scheduledWorkflowName/workflowIndex labels) count against another namespace's schedule and, via the maxConcurrency gate (default 1), starve the victim's recurring runs (plus foreign metadata written into the victim's ScheduledWorkflow status)",
+        "status": "active",
+        "commit_hash": "e556f9d645230da4650f13bdcc04d8477eb47c1a",
+        "detected_at_pst": "2026-08-17T07:00:52-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/120"
     }
 ]
