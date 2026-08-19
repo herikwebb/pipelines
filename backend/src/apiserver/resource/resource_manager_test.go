@@ -4015,6 +4015,53 @@ func TestReportWorkflowResource_ScheduledWorkflowIDEmpty_Success(t *testing.T) {
 	assert.Equal(t, expectedRun.ToV1(), run.ToV1())
 }
 
+func TestReportWorkflowResource_NamespaceMismatch_Rejected(t *testing.T) {
+	store, manager, exp := initWithExperiment(t)
+	defer store.Close()
+	apiRun := &model.Run{
+		DisplayName: "run1",
+		Namespace:   "ns1",
+		PipelineSpec: model.PipelineSpec{
+			WorkflowSpecManifest: model.LargeText(testWorkflow.ToStringForStore()),
+			Parameters:           "[{\"name\":\"param1\",\"value\":\"world\"}]",
+		},
+		ExperimentId: exp.UUID,
+	}
+	run, err := manager.CreateRun(context.Background(), apiRun)
+	assert.Nil(t, err)
+	// The run must have a namespace for the cross-namespace guard to apply.
+	run, err = manager.GetRun(run.UUID)
+	assert.Nil(t, err)
+	assert.NotEmpty(t, run.Namespace)
+
+	// A workflow reported from a different namespace must not be allowed to
+	// overwrite this run, even though it carries the run's ID label.
+	spoofed := util.NewWorkflow(&v1alpha1.Workflow{
+		ObjectMeta: v1.ObjectMeta{
+			UID:       types.UID(run.UUID),
+			Labels:    map[string]string{util.LabelKeyWorkflowRunId: run.UUID},
+			Namespace: "attacker-ns",
+		},
+		Status: v1alpha1.WorkflowStatus{Phase: v1alpha1.WorkflowRunning},
+	})
+	_, err = manager.ReportWorkflowResource(context.Background(), spoofed)
+	assert.NotNil(t, err)
+	assert.Equal(t, codes.InvalidArgument, err.(*util.UserError).ExternalStatusCode())
+	assert.Contains(t, err.Error(), "does not match run namespace")
+
+	// A workflow reported from the run's own namespace still succeeds.
+	legit := util.NewWorkflow(&v1alpha1.Workflow{
+		ObjectMeta: v1.ObjectMeta{
+			UID:       types.UID(run.UUID),
+			Labels:    map[string]string{util.LabelKeyWorkflowRunId: run.UUID},
+			Namespace: run.Namespace,
+		},
+		Status: v1alpha1.WorkflowStatus{Phase: v1alpha1.WorkflowRunning},
+	})
+	_, err = manager.ReportWorkflowResource(context.Background(), legit)
+	assert.Nil(t, err)
+}
+
 func TestReportWorkflowResource_ScheduledWorkflowIDNotEmpty_Success(t *testing.T) {
 	store, manager, job := initWithJob(t)
 	defer store.Close()

@@ -1602,6 +1602,17 @@ func (r *ResourceManager) ReportWorkflowResource(ctx context.Context, execSpec u
 	// If run already exists, simply update it
 	run, updateError := r.GetRun(runId)
 	if updateError == nil {
+		// A workflow may only report to a run in its own namespace. The run is
+		// selected purely from the attacker-settable runid label, and the
+		// cluster-wide persistence agent reports every labeled workflow with its
+		// privileged token, so without this check a tenant could plant a workflow
+		// labeled with another tenant's run ID and overwrite that run's state and
+		// stored manifest across the namespace boundary.
+		if run.Namespace != "" && run.Namespace != execSpec.ExecutionNamespace() {
+			return nil, util.NewInvalidInputError(
+				"Failed to report a workflow for run %s: workflow namespace %q does not match run namespace %q",
+				runId, execSpec.ExecutionNamespace(), run.Namespace)
+		}
 		run.State = state
 		run.Conditions = string(state.ToV1())
 		run.FinishedAtInSec = execStatus.FinishedAt()
