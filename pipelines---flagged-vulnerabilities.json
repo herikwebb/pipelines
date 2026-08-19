@@ -160,5 +160,21 @@
         "commit_hash": "e556f9d645230da4650f13bdcc04d8477eb47c1a",
         "detected_at_pst": "2026-08-17T07:00:52-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/120"
+    },
+    {
+        "title": "Cross-tenant run-record tampering: the API server updates a run selected solely by the attacker-settable pipelines.kubeflow.org/runid label on a workflow reported by the cluster-wide persistence agent, with no namespace match, letting a tenant overwrite another tenant's run state and stored runtime manifest",
+        "status": "active",
+        "commit_hash": "a90975cbeb51ceeeded5366da02bc509b9b520f6",
+        "detected_at_pst": "2026-08-19T06:50:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/122",
+        "primary_location": "backend/src/apiserver/resource/resource_manager.go"
+    },
+    {
+        "title": "Reflected XSS in ml-pipeline-ui TensorBoard create handler: the caller-supplied logdir query param is echoed unescaped into a text/html 500 error body (POST /apps/tensorboard), executing script in the UI origin via an auto-submitting cross-site form against a logged-in user",
+        "status": "active",
+        "commit_hash": "a90975cbeb51ceeeded5366da02bc509b9b520f6",
+        "detected_at_pst": "2026-08-19T06:50:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/124",
+        "primary_location": "frontend/server/handlers/tensorboard.ts"
     }
 ]
