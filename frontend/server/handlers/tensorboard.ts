@@ -159,7 +159,13 @@ export const getTensorboardHandlers = (
     } catch (err) {
       const details = await parseError(err);
       console.error(`Failed to start Tensorboard app: ${details.message}`, details.additionalInfo);
-      res.status(500).send(`Failed to start Tensorboard app: ${details.message}`);
+      // The error message echoes the caller-supplied logdir, so send it as plain
+      // text rather than the res.send() default of text/html to avoid reflecting
+      // an unescaped payload as executable markup.
+      res
+        .status(500)
+        .type('text/plain')
+        .send(`Failed to start Tensorboard app: ${details.message}`);
     }
   };
 
