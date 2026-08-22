@@ -176,5 +176,12 @@
         "detected_at_pst": "2026-08-19T06:50:00-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/124",
         "primary_location": "frontend/server/handlers/tensorboard.ts"
+    },
+    {
+        "title": "Cross-tenant run execution via the multi-user ScheduledWorkflow controller: a tenant with kubeflow-edit can create a ScheduledWorkflow directly in their own namespace pointing ExperimentId at another namespace, and the cluster-privileged controller creates/executes a run in the victim namespace (bypasses API-server per-user authz)",
+        "status": "active",
+        "commit_hash": "7b70c7b95f6832772efd6fd0029a4024491a0f44",
+        "detected_at_pst": "2026-08-22T06:35:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/126"
     }
 ]
