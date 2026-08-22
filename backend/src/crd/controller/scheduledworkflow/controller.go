@@ -91,10 +91,11 @@ var (
 
 // Controller is the controller implementation for ScheduledWorkflow resources
 type Controller struct {
-	kubeClient     *client.KubeClient
-	swfClient      *client.ScheduledWorkflowClient
-	workflowClient *client.WorkflowClient
-	runClient      api.RunServiceClient
+	kubeClient       *client.KubeClient
+	swfClient        *client.ScheduledWorkflowClient
+	workflowClient   *client.WorkflowClient
+	runClient        api.RunServiceClient
+	experimentClient api.ExperimentServiceClient
 
 	// workqueue is a rate limited work queue. This is used to queue work to be
 	// processed instead of performing it as soon as a change happens. This
@@ -148,6 +149,7 @@ func NewController(
 	swfClientSet swfclientset.Interface,
 	workflowClientSet commonutil.ExecutionClient,
 	runClient api.RunServiceClient,
+	experimentClient api.ExperimentServiceClient,
 	swfInformerFactory swfinformers.SharedInformerFactory,
 	executionInformer commonutil.ExecutionInformer,
 	time commonutil.TimeInterface,
@@ -182,10 +184,11 @@ func NewController(
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: util.ControllerAgentName})
 
 	controller := &Controller{
-		kubeClient:     client.NewKubeClient(kubeClientSet, recorder),
-		swfClient:      client.NewScheduledWorkflowClient(swfClientSet, swfInformer),
-		runClient:      runClient,
-		workflowClient: client.NewWorkflowClient(workflowClientSet, executionInformer),
+		kubeClient:       client.NewKubeClient(kubeClientSet, recorder),
+		swfClient:        client.NewScheduledWorkflowClient(swfClientSet, swfInformer),
+		runClient:        runClient,
+		experimentClient: experimentClient,
+		workflowClient:   client.NewWorkflowClient(workflowClientSet, executionInformer),
 		workqueue: workqueue.NewNamedRateLimitingQueue(
 			workqueue.NewItemExponentialFailureRateLimiter(DefaultJobBackOff, MaxJobBackOff), swfregister.Kind),
 		time:               time,
@@ -655,6 +658,32 @@ func (c *Controller) submitNewWorkflowIfNotAlreadySubmitted(
 	// Inject user identity header for multi-user mode authorization.
 	if c.userIdentityHeader != "" && c.userIdentityValue != "" {
 		ctx = metadata.AppendToOutgoingContext(ctx, c.userIdentityHeader, c.userIdentityValue)
+
+		// A ScheduledWorkflow can be created directly in a namespace by any user
+		// with edit access (the kubeflow-edit role grants full access to the
+		// scheduledworkflows resource), bypassing the API server's per-user
+		// authorization. Because the run below is created with the controller's
+		// cluster-privileged identity and the API server derives the run's
+		// namespace from the referenced experiment, a tenant could point
+		// ExperimentId at another namespace's experiment and have runs executed
+		// there under that namespace's identities. Enforce that the referenced
+		// experiment belongs to the ScheduledWorkflow's own namespace before
+		// creating the run.
+		if swf.Spec.ExperimentId != "" {
+			experiment, err := c.experimentClient.GetExperiment(ctx, &api.GetExperimentRequest{
+				ExperimentId: swf.Spec.ExperimentId,
+			})
+			if err != nil {
+				return false, "", fmt.Errorf(
+					"failed to resolve experiment %s for scheduled workflow (%s/%s): %w",
+					swf.Spec.ExperimentId, swf.Namespace, swf.Name, err)
+			}
+			if experiment.GetNamespace() != swf.Namespace {
+				return false, "", fmt.Errorf(
+					"scheduled workflow (%s/%s) references experiment %s that belongs to namespace %q, which does not match the scheduled workflow namespace; refusing to create a cross-namespace run",
+					swf.Namespace, swf.Name, swf.Spec.ExperimentId, experiment.GetNamespace())
+			}
+		}
 	}
 
 	var runtimeConfig *api.RuntimeConfig

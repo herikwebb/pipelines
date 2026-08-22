@@ -271,6 +271,7 @@ func TestNewController_InvalidUserIdentityHeader(test *testing.T) {
 		nil, // swfClientSet
 		nil, // workflowClientSet
 		nil, // runClient
+		nil, // experimentClient
 		nil, // swfInformerFactory
 		nil, // executionInformer
 		nil, // time

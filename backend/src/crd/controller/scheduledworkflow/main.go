@@ -139,6 +139,7 @@ func main() {
 	}
 
 	runClient := api.NewRunServiceClient(apiConnection)
+	experimentClient := api.NewExperimentServiceClient(apiConnection)
 
 	log.Info("Successfully connected to the API server")
 
@@ -147,6 +148,7 @@ func main() {
 		scheduleClient,
 		execClient,
 		runClient,
+		experimentClient,
 		scheduleInformerFactory,
 		execInformer,
 		commonutil.NewRealTime(),
