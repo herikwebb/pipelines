@@ -24,13 +24,32 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.5' }}
-          # Reasoning models spend part of the budget on reasoning tokens; keep
-          # enough headroom to still emit review text (3000 was easily exhausted,
-          # producing empty responses that fail the review gate).
-          OPENAI_MAX_OUTPUT_TOKENS: ${{ vars.OPENAI_MAX_OUTPUT_TOKENS || '16000' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.6-sol' }}
+          OPENAI_REASONING_EFFORT: ${{ vars.OPENAI_REASONING_EFFORT || 'high' }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash scripts/review-pr.sh
+
+  review-claude:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run PR review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL || 'claude-opus-5' }}
+          CLAUDE_REASONING_EFFORT: ${{ vars.CLAUDE_REASONING_EFFORT || 'high' }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/review-pr-claude.sh

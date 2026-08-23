@@ -140,7 +140,7 @@ fi
 
 # Guard: never leak fork-only automation into an upstream PR. These files exist
 # only on the fork and would pollute the upstream diff.
-FORK_ONLY_RE='(^|/)(pr-review\.yml|promote-upstream\.yml|review-pr\.sh|promote-upstream\.sh|AGENTS\.md)$'
+FORK_ONLY_RE='(^|/)(pr-review\.yml|promote-upstream\.yml|review-pr\.sh|review-pr-claude\.sh|promote-upstream\.sh|AGENTS\.md)$'
 LEAKED="$(grep -Ei "${FORK_ONLY_RE}" <<<"${CHANGED_FILES}" || true)"
 if [[ -n "${LEAKED}" ]]; then
   echo "Refusing to promote: branch modifies fork-only automation files:" >&2
