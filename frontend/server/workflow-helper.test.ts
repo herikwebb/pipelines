@@ -19,6 +19,7 @@ import {
   composePodLogsStreamHandler,
   getPodLogsStreamFromK8s,
   getPodLogsStreamFromWorkflow,
+  configuredArtifactEndpoints,
   toGetPodLogsStream,
   getKeyFormatFromArtifactRepositories,
 } from './workflow-helper.js';
@@ -43,6 +44,32 @@ describe('workflow-helper', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+  });
+
+  describe('configuredArtifactEndpoints', () => {
+    it.each(['seaweedfs.kubeflow', 'localhost'])(
+      'preserves an already qualified MINIO_HOST value %s',
+      (minioHost) => {
+        expect(
+          configuredArtifactEndpoints({
+            MINIO_HOST: minioHost,
+            MINIO_NAMESPACE: 'kubeflow',
+            MINIO_PORT: '9000',
+            MINIO_SSL: 'false',
+          }),
+        ).toContain(`http://${minioHost}:9000`);
+      },
+    );
+
+    it('does not trust the AWS SDK default when AWS is not explicitly configured', () => {
+      expect(configuredArtifactEndpoints({})).not.toContain('https://s3.amazonaws.com');
+    });
+
+    it('trusts an explicitly configured AWS endpoint', () => {
+      expect(
+        configuredArtifactEndpoints({ AWS_S3_ENDPOINT: 's3.example.test', AWS_SSL: 'true' }),
+      ).toContain('https://s3.example.test:443');
+    });
   });
 
   describe('composePodLogsStreamHandler', () => {
@@ -197,7 +224,7 @@ describe('workflow-helper', () => {
               s3: {
                 accessKeySecret: { key: 'accessKey', name: 'accessKeyName' },
                 bucket: 'bucket',
-                endpoint: 'seaweedfs.kubeflow',
+                endpoint: 'seaweedfs.kubeflow:9000',
                 insecure: true,
                 key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/some-artifact.csv',
                 secretKeySecret: { key: 'secretKey', name: 'secretKeyName' },
@@ -255,7 +282,7 @@ describe('workflow-helper', () => {
       expect(mockedClient).toBeCalledWith({
         accessKey: 'someSecret',
         endPoint: 'seaweedfs.kubeflow',
-        port: 80,
+        port: 9000,
         secretKey: 'someSecret',
         useSSL: false,
       });
@@ -278,8 +305,8 @@ describe('workflow-helper', () => {
               archiveLogs: true,
               s3: {
                 accessKeySecret: { key: 'accessKey', name: 'accessKeyName' },
-                bucket: 'bucket',
-                endpoint: 'seaweedfs.kubeflow',
+                bucket: 'mlpipeline',
+                endpoint: 'seaweedfs.kubeflow:9000',
                 insecure: true,
                 key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/some-artifact.csv',
                 secretKeySecret: { key: 'secretKey', name: 'secretKeyName' },
@@ -293,7 +320,7 @@ describe('workflow-helper', () => {
                   {
                     name: 'main-logs',
                     s3: {
-                      key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/main.log',
+                      key: 'artifacts/my-user-namespace/workflow-name/2024/07/09/workflow-name-system-container-impl-abc/main.log',
                     },
                   },
                 ],
@@ -317,8 +344,11 @@ describe('workflow-helper', () => {
       // environment, matching the deployment's MINIO_ACCESS_KEY/MINIO_SECRET_KEY.
       const previousAccessKey = process.env.MINIO_ACCESS_KEY;
       const previousSecretKey = process.env.MINIO_SECRET_KEY;
+      const previousKeyFormat = process.env.ARGO_KEYFORMAT;
       process.env.MINIO_ACCESS_KEY = 'server-access-key';
       process.env.MINIO_SECRET_KEY = 'server-secret-key';
+      process.env.ARGO_KEYFORMAT =
+        'artifacts/{{workflow.namespace}}/{{workflow.name}}/{{workflow.creationTimestamp.Y}}/{{workflow.creationTimestamp.m}}/{{workflow.creationTimestamp.d}}/{{pod.name}}/';
 
       const objStream = new PassThrough();
       const mockedClient: Mock = MinioClient as any;
@@ -334,6 +364,11 @@ describe('workflow-helper', () => {
       } finally {
         process.env.MINIO_ACCESS_KEY = previousAccessKey;
         process.env.MINIO_SECRET_KEY = previousSecretKey;
+        if (previousKeyFormat === undefined) {
+          delete process.env.ARGO_KEYFORMAT;
+        } else {
+          process.env.ARGO_KEYFORMAT = previousKeyFormat;
+        }
       }
 
       expect(mockedGetK8sSecret).not.toBeCalled();
@@ -343,9 +378,149 @@ describe('workflow-helper', () => {
       expect(mockedClient).toBeCalledWith({
         accessKey: 'server-access-key',
         endPoint: 'seaweedfs.kubeflow',
-        port: 80,
+        port: 9000,
         secretKey: 'server-secret-key',
         useSSL: false,
+      });
+    });
+
+    it.each([
+      {
+        bucket: 'other-bucket',
+        key: 'artifacts/my-user-namespace/workflow-name/2024/07/09/workflow-name-system-container-impl-abc/main.log',
+        name: 'another bucket',
+      },
+      {
+        bucket: 'mlpipeline',
+        key: 'artifacts/my-user-namespace/other-workflow/2024/07/09/other-pod/main.log',
+        name: "another workflow's key",
+      },
+    ])(
+      'rejects workflow metadata pointing at $name with shared credentials',
+      async ({ bucket, key }) => {
+        const sampleWorkflow = {
+          status: {
+            artifactRepositoryRef: {
+              artifactRepository: {
+                archiveLogs: true,
+                s3: {
+                  bucket,
+                  endpoint: 'seaweedfs.kubeflow:9000',
+                  insecure: true,
+                  key: 'unused',
+                },
+              },
+            },
+            nodes: {
+              'workflow-name-abc': {
+                outputs: { artifacts: [{ name: 'main-logs', s3: { key } }] },
+              },
+            },
+          },
+        };
+        const mockedGetArgoWorkflow: Mock = getArgoWorkflow as any;
+        mockedGetArgoWorkflow.mockResolvedValueOnce(sampleWorkflow);
+        const mockedGetServerNamespace: Mock = getServerNamespace as any;
+        mockedGetServerNamespace.mockReturnValue('kubeflow');
+        const mockedClient: Mock = MinioClient as any;
+        const previousKeyFormat = process.env.ARGO_KEYFORMAT;
+        process.env.ARGO_KEYFORMAT =
+          'artifacts/{{workflow.namespace}}/{{workflow.name}}/{{workflow.creationTimestamp.Y}}/{{workflow.creationTimestamp.m}}/{{workflow.creationTimestamp.d}}/{{pod.name}}';
+
+        try {
+          await expect(
+            getPodLogsStreamFromWorkflow(
+              'workflow-name-system-container-impl-abc',
+              '2024-07-09',
+              'my-user-namespace',
+            ),
+          ).rejects.toThrow('outside the configured namespace-scoped bucket and key');
+        } finally {
+          if (previousKeyFormat === undefined) {
+            delete process.env.ARGO_KEYFORMAT;
+          } else {
+            process.env.ARGO_KEYFORMAT = previousKeyFormat;
+          }
+        }
+        expect(mockedClient).not.toBeCalled();
+      },
+    );
+
+    it('uses AWS credentials for a configured cross-namespace AWS archive endpoint', async () => {
+      const sampleWorkflow = {
+        status: {
+          artifactRepositoryRef: {
+            artifactRepository: {
+              archiveLogs: true,
+              s3: {
+                bucket: 'mlpipeline',
+                endpoint: 's3.example.test',
+                insecure: false,
+                key: 'unused',
+              },
+            },
+          },
+          nodes: {
+            'workflow-name-abc': {
+              outputs: {
+                artifacts: [
+                  {
+                    name: 'main-logs',
+                    s3: {
+                      key: 'artifacts/my-user-namespace/workflow-name/2024/07/09/workflow-name-system-container-impl-abc/main.log',
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      };
+      const mockedGetArgoWorkflow: Mock = getArgoWorkflow as any;
+      mockedGetArgoWorkflow.mockResolvedValueOnce(sampleWorkflow);
+      const mockedGetServerNamespace: Mock = getServerNamespace as any;
+      mockedGetServerNamespace.mockReturnValue('kubeflow');
+      const mockedClient: Mock = MinioClient as any;
+      const objStream = new PassThrough();
+      MinioClient.prototype.getObject = vi.fn().mockResolvedValueOnce(objStream) as any;
+      objStream.end('some fake logs.');
+
+      const names = [
+        'ARGO_KEYFORMAT',
+        'AWS_ACCESS_KEY_ID',
+        'AWS_SECRET_ACCESS_KEY',
+        'AWS_S3_ENDPOINT',
+      ] as const;
+      const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+      process.env.ARGO_KEYFORMAT =
+        'artifacts/{{workflow.namespace}}/{{workflow.name}}/{{workflow.creationTimestamp.Y}}/{{workflow.creationTimestamp.m}}/{{workflow.creationTimestamp.d}}/{{pod.name}}';
+      process.env.AWS_ACCESS_KEY_ID = 'aws-access-key';
+      process.env.AWS_SECRET_ACCESS_KEY = 'aws-secret-key';
+      process.env.AWS_S3_ENDPOINT = 's3.example.test';
+
+      try {
+        await getPodLogsStreamFromWorkflow(
+          'workflow-name-system-container-impl-abc',
+          '2024-07-09',
+          'my-user-namespace',
+        );
+      } finally {
+        for (const name of names) {
+          const value = previous[name];
+          if (value === undefined) {
+            delete process.env[name];
+          } else {
+            process.env[name] = value;
+          }
+        }
+      }
+
+      expect(mockedClient).toBeCalledWith({
+        accessKey: 'aws-access-key',
+        endPoint: 's3.example.test',
+        port: 443,
+        secretKey: 'aws-secret-key',
+        useSSL: true,
       });
     });
 
@@ -360,7 +535,7 @@ describe('workflow-helper', () => {
               s3: {
                 accessKeySecret: { key: 'accessKey', name: 'accessKeyName' },
                 bucket: 'bucket',
-                endpoint: 'seaweedfs.kubeflow',
+                endpoint: 'seaweedfs.kubeflow:9000',
                 insecure: true,
                 key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/some-artifact.csv',
                 secretKeySecret: { key: 'secretKey', name: 'secretKeyName' },
@@ -416,7 +591,7 @@ describe('workflow-helper', () => {
       expect(mockedClient).toBeCalledWith({
         accessKey: 'custom-store-secret',
         endPoint: 'seaweedfs.kubeflow',
-        port: 80,
+        port: 9000,
         secretKey: 'custom-store-secret',
         useSSL: false,
       });
@@ -434,7 +609,7 @@ describe('workflow-helper', () => {
                 // No accessKeySecret / secretKeySecret: the artifact repository
                 // does not reference a credential Secret.
                 bucket: 'bucket',
-                endpoint: 'seaweedfs.kubeflow',
+                endpoint: 'seaweedfs.kubeflow:9000',
                 insecure: true,
                 key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/some-artifact.csv',
               },
@@ -492,10 +667,150 @@ describe('workflow-helper', () => {
       expect(mockedClient).toBeCalledWith({
         accessKey: 'server-access-key',
         endPoint: 'seaweedfs.kubeflow',
-        port: 80,
+        port: 9000,
         secretKey: 'server-secret-key',
         useSSL: false,
       });
+    });
+
+    it.each(['^.*$', '.*', '^.+$', '^[\\s\\S]*$'])(
+      'rejects an unconfigured workflow-status endpoint despite broad domain regex %s (SSRF)',
+      async (allowedDomain) => {
+        // The endpoint is resolved from the Argo Workflow status, which a
+        // namespace-owning tenant can influence via a namespace-local
+        // artifact-repositories configmap. The legacy allow-all regex must not let
+        // the shared server build a client toward an attacker-chosen host.
+        const sampleWorkflow = {
+          apiVersion: 'argoproj.io/v1alpha1',
+          kind: 'Workflow',
+          status: {
+            artifactRepositoryRef: {
+              artifactRepository: {
+                archiveLogs: true,
+                s3: {
+                  bucket: 'bucket',
+                  endpoint: 'attacker.evil.example:9000',
+                  insecure: true,
+                  key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/some-artifact.csv',
+                },
+              },
+            },
+            nodes: {
+              'workflow-name-abc': {
+                outputs: {
+                  artifacts: [
+                    {
+                      name: 'main-logs',
+                      s3: {
+                        key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/main.log',
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        };
+
+        const mockedGetArgoWorkflow: Mock = getArgoWorkflow as any;
+        mockedGetArgoWorkflow.mockResolvedValueOnce(sampleWorkflow);
+
+        const mockedGetServerNamespace: Mock = getServerNamespace as any;
+        mockedGetServerNamespace.mockReturnValue('kubeflow');
+
+        const mockedClient: Mock = MinioClient as any;
+        mockedClient.mockClear();
+        MinioClient.prototype.getObject = vi.fn() as any;
+
+        const previousAllowedDomain = process.env.ALLOWED_ARTIFACT_DOMAIN_REGEX;
+        process.env.ALLOWED_ARTIFACT_DOMAIN_REGEX = allowedDomain;
+
+        try {
+          await expect(
+            getPodLogsStreamFromWorkflow(
+              'workflow-name-system-container-impl-abc',
+              '2024-07-09',
+              'kubeflow',
+            ),
+          ).rejects.toThrow('not in the allowed artifact domain list');
+        } finally {
+          if (previousAllowedDomain === undefined) {
+            delete process.env.ALLOWED_ARTIFACT_DOMAIN_REGEX;
+          } else {
+            process.env.ALLOWED_ARTIFACT_DOMAIN_REGEX = previousAllowedDomain;
+          }
+        }
+
+        // No object-store client is constructed and no outbound object read is made.
+        expect(mockedClient).not.toBeCalled();
+      },
+    );
+
+    it('allows a workflow-status endpoint that exactly matches server configuration', async () => {
+      const sampleWorkflow = {
+        apiVersion: 'argoproj.io/v1alpha1',
+        kind: 'Workflow',
+        status: {
+          artifactRepositoryRef: {
+            artifactRepository: {
+              archiveLogs: true,
+              s3: {
+                bucket: 'bucket',
+                endpoint: 'seaweedfs.kubeflow:9000',
+                insecure: true,
+                key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/some-artifact.csv',
+              },
+            },
+          },
+          nodes: {
+            'workflow-name-abc': {
+              outputs: {
+                artifacts: [
+                  {
+                    name: 'main-logs',
+                    s3: {
+                      key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/main.log',
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      };
+
+      const mockedGetArgoWorkflow: Mock = getArgoWorkflow as any;
+      mockedGetArgoWorkflow.mockResolvedValueOnce(sampleWorkflow);
+
+      const mockedGetServerNamespace: Mock = getServerNamespace as any;
+      mockedGetServerNamespace.mockReturnValue('kubeflow');
+
+      const mockedGetK8sSecret: Mock = getK8sSecret as any;
+      mockedGetK8sSecret.mockResolvedValue('someSecret');
+
+      const objStream = new PassThrough();
+      const mockedClient: Mock = MinioClient as any;
+      mockedClient.mockClear();
+      MinioClient.prototype.getObject = vi.fn().mockResolvedValueOnce(objStream) as any;
+      objStream.end('some fake logs.');
+
+      await getPodLogsStreamFromWorkflow(
+        'workflow-name-system-container-impl-abc',
+        '2024-07-09',
+        'kubeflow',
+      );
+
+      // The configured endpoint is accepted and the object-store client is
+      // constructed toward it (the outbound read then proceeds as normal).
+      expect(mockedClient).toBeCalledTimes(1);
+      expect(mockedClient).toBeCalledWith(
+        expect.objectContaining({ endPoint: 'seaweedfs.kubeflow', port: 9000, useSSL: false }),
+      );
+      const clientInstance = mockedClient.mock.results[0].value;
+      expect(clientInstance.getObject).toBeCalledWith(
+        'bucket',
+        'prefix/workflow-name/workflow-name-system-container-impl-abc/main.log',
+      );
     });
   });
 });

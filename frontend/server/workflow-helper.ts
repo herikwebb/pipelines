@@ -21,6 +21,7 @@ import {
   getServerNamespace,
 } from './k8s-helper.js';
 import { createMinioClient, MinioRequestConfig, getObjectStream } from './minio-helper.js';
+import { isTrustedArtifactEndpoint } from './handlers/domain-checker.js';
 import * as JsYaml from 'js-yaml';
 
 export interface PartialArgoWorkflow {
@@ -291,7 +292,7 @@ export function createPodLogsMinioRequestConfig(
  */
 export async function getPodLogsMinioRequestConfigfromWorkflow(
   podName: string,
-  _createdAt?: string,
+  createdAt: string = '',
   namespace?: string,
 ): Promise<MinioRequestConfig> {
   let workflow: PartialArgoWorkflow;
@@ -333,7 +334,32 @@ export async function getPodLogsMinioRequestConfigfromWorkflow(
     throw new Error('Unable to find artifact repository information from workflow status.');
   }
 
-  const { host, port } = urlSplit(s3Artifact.endpoint, s3Artifact.insecure);
+  const serverNamespace = getServerNamespace();
+  if (namespace && namespace !== serverNamespace) {
+    const trustedBucket = process.env.ARGO_ARCHIVE_BUCKETNAME || 'mlpipeline';
+    const trustedKeyFormat =
+      process.env.ARGO_KEYFORMAT ||
+      'artifacts/{{workflow.name}}/{{workflow.creationTimestamp.Y}}/{{workflow.creationTimestamp.m}}/{{workflow.creationTimestamp.d}}/{{pod.name}}';
+    const expectedKey = expectedArchivedLogKey(trustedKeyFormat, podName, createdAt, namespace);
+    if (s3Artifact.bucket !== trustedBucket || !expectedKey || logKey !== expectedKey) {
+      throw new Error(
+        'Refusing workflow-recorded archived logs outside the configured namespace-scoped bucket and key.',
+      );
+    }
+  }
+
+  const parsedEndpoint = parseArtifactEndpoint(s3Artifact.endpoint, s3Artifact.insecure);
+
+  // Workflow status can carry a tenant-influenced object-store endpoint. The
+  // A hostname regex cannot reliably distinguish a restrictive allowlist from
+  // an equivalent allow-all expression. Require an exact effective-origin match
+  // against server object-store configuration instead.
+  if (!isTrustedArtifactEndpoint(parsedEndpoint.url, configuredArtifactEndpoints())) {
+    throw new Error(
+      'Artifact repository endpoint host is not in the allowed artifact domain list.',
+    );
+  }
+
   // Security: Only read the object-store credential Secret from the server's own
   // namespace. In multi-user deployments the run namespace is a customer/user
   // namespace, and the ml-pipeline-ui service account may not read Secrets there;
@@ -350,7 +376,16 @@ export async function getPodLogsMinioRequestConfigfromWorkflow(
   // therefore treat a missing namespace as the server namespace and read the
   // workflow-referenced Secret so custom object-store credentials are honored,
   // while still refusing to read Secrets from any user namespace.
-  const serverNamespace = getServerNamespace();
+  const configuredAwsEndpoint = configuredAWSArtifactEndpoint();
+  const useAwsCredentials = Boolean(
+    configuredAwsEndpoint && isTrustedArtifactEndpoint(parsedEndpoint.url, [configuredAwsEndpoint]),
+  );
+  const environmentAccessKey = useAwsCredentials
+    ? process.env.AWS_ACCESS_KEY_ID
+    : process.env.MINIO_ACCESS_KEY || 'minio';
+  const environmentSecretKey = useAwsCredentials
+    ? process.env.AWS_SECRET_ACCESS_KEY
+    : process.env.MINIO_SECRET_KEY || 'minio123';
   let accessKey: string | undefined;
   let secretKey: string | undefined;
   if (namespace && namespace === serverNamespace) {
@@ -365,13 +400,13 @@ export async function getPodLogsMinioRequestConfigfromWorkflow(
     // Secret (getMinioClientSecrets returns no credentials).
     const { accessKey: readAccessKey = undefined, secretKey: readSecretKey = undefined } =
       await getMinioClientSecrets(s3Artifact, serverNamespace);
-    accessKey = readAccessKey || process.env.MINIO_ACCESS_KEY || 'minio';
-    secretKey = readSecretKey || process.env.MINIO_SECRET_KEY || 'minio123';
+    accessKey = readAccessKey || environmentAccessKey;
+    secretKey = readSecretKey || environmentSecretKey;
   } else {
     // Cross-namespace (user-namespace) run, or an unknown server namespace: never
     // read a user-namespace Secret; use the frontend's own configured credentials.
-    accessKey = process.env.MINIO_ACCESS_KEY || 'minio';
-    secretKey = process.env.MINIO_SECRET_KEY || 'minio123';
+    accessKey = environmentAccessKey;
+    secretKey = environmentSecretKey;
   }
 
   const client = await createMinioClient(
@@ -381,8 +416,8 @@ export async function getPodLogsMinioRequestConfigfromWorkflow(
       // start-proxy-and-server.sh sets MINIO_HOST=localhost, but it doesn't
       // seem to be respected when running the server in development mode.
       // Investigate and fix this.
-      endPoint: host,
-      port,
+      endPoint: parsedEndpoint.host,
+      port: parsedEndpoint.port,
       secretKey,
       useSSL: !s3Artifact.insecure,
     },
@@ -393,6 +428,71 @@ export async function getPodLogsMinioRequestConfigfromWorkflow(
     client,
     key: logKey,
   };
+}
+
+export function configuredArtifactEndpoints(env: NodeJS.ProcessEnv = process.env): string[] {
+  const minioHost = env.MINIO_HOST || 'seaweedfs';
+  const minioNamespace = env.MINIO_NAMESPACE ?? 'kubeflow';
+  // Match the default service-name composition while preserving operator values
+  // that are already qualified (including local development's localhost).
+  const qualifiedMinioHost =
+    minioNamespace && !isQualifiedHost(minioHost) ? `${minioHost}.${minioNamespace}` : minioHost;
+  const minioPort = env.MINIO_PORT || '9000';
+  const endpoints = [
+    endpointUrl(`${qualifiedMinioHost}:${minioPort}`, !environmentBoolean(env.MINIO_SSL, false)),
+  ];
+
+  // Unlike the artifact handler's explicitly selected S3 source, the workflow
+  // fallback must not trust AWS merely because the SDK has a public default.
+  const awsEndpoint = configuredAWSArtifactEndpoint(env);
+  if (awsEndpoint) {
+    endpoints.push(awsEndpoint);
+  }
+  return endpoints;
+}
+
+function configuredAWSArtifactEndpoint(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.AWS_S3_ENDPOINT
+    ? endpointUrl(env.AWS_S3_ENDPOINT, !environmentBoolean(env.AWS_SSL, true))
+    : undefined;
+}
+
+function expectedArchivedLogKey(
+  keyFormat: string,
+  podName: string,
+  createdAt: string,
+  namespace: string,
+): string | undefined {
+  if (!/(^|\/)\{\{workflow\.namespace\}\}(\/|$)/.test(keyFormat.replace(/\s+/g, ''))) {
+    return undefined;
+  }
+  const [year = '', month = '', day = ''] = createdAt.split('-');
+  const keyPrefix = keyFormat
+    .replace(/\s+/g, '')
+    .replace('{{workflow.name}}', podName.replace(/-system-container-impl-.*/, ''))
+    .replace('{{workflow.creationTimestamp.Y}}', year)
+    .replace('{{workflow.creationTimestamp.m}}', month)
+    .replace('{{workflow.creationTimestamp.d}}', day)
+    .replace('{{pod.name}}', podName)
+    .replace('{{workflow.namespace}}', namespace);
+  const key = `${keyPrefix.endsWith('/') ? keyPrefix : `${keyPrefix}/`}main.log`;
+  return key.split('/').includes('..') ? undefined : key;
+}
+
+function isQualifiedHost(host: string): boolean {
+  return host === 'localhost' || host.includes('.') || host.includes(':');
+}
+
+function environmentBoolean(value: string | undefined, defaultValue: boolean): boolean {
+  return value === undefined ? defaultValue : ['true', '1'].includes(value.toLowerCase());
+}
+
+function endpointUrl(endpoint: string, insecure: boolean): string {
+  try {
+    return parseArtifactEndpoint(endpoint, insecure).url;
+  } catch {
+    return endpoint;
+  }
 }
 
 /**
@@ -417,10 +517,19 @@ async function getMinioClientSecrets(
  * @param insecure if port is not provided in uri, return port depending on whether ssl is enabled.
  */
 
-function urlSplit(uri: string, insecure: boolean) {
-  const chunks = uri.split(':');
-  if (chunks.length === 1) {
-    return { host: chunks[0], port: insecure ? 80 : 443 };
+function parseArtifactEndpoint(uri: string, insecure: boolean) {
+  const protocol = insecure ? 'http:' : 'https:';
+  const parsedEndpoint = new URL(uri.includes('://') ? uri : `${protocol}//${uri}`);
+  if (!['http:', 'https:'].includes(parsedEndpoint.protocol)) {
+    throw new Error('Artifact repository endpoint must use HTTP or HTTPS.');
   }
-  return { host: chunks[0], port: parseInt(chunks[1], 10) };
+  if (parsedEndpoint.username || parsedEndpoint.password) {
+    throw new Error('Artifact repository endpoint must not contain user info.');
+  }
+  const port = parsedEndpoint.port ? Number(parsedEndpoint.port) : insecure ? 80 : 443;
+  return {
+    host: parsedEndpoint.hostname,
+    port,
+    url: `${protocol}//${parsedEndpoint.hostname}:${port}`,
+  };
 }
