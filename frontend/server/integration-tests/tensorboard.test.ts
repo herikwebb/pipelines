@@ -145,6 +145,27 @@ describe('/apps/tensorboard', () => {
         .expect(400, 'namespace argument is required');
     });
 
+    it('returns get failures as plain text', async () => {
+      const reflectedLogDir = '<img src=x onerror=alert(1)>';
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const viewer = newGetTensorboardResponse();
+      (viewer.spec.tensorboardSpec.tensorflowImage as any) = {
+        split: () => {
+          throw new Error(`could not parse viewer for ${reflectedLogDir}`);
+        },
+      };
+      k8sGetCustomObjectSpy.mockResolvedValue(viewer);
+
+      app = new UIServer(loadConfigs(argv, {}));
+      const response = await requests(app.app)
+        .get(`/apps/tensorboard?logdir=${encodeURIComponent(reflectedLogDir)}&namespace=test-ns`)
+        .expect(500);
+
+      expect(response.headers['content-type']).toMatch(/^text\/plain/);
+      expect(response.text).toContain(reflectedLogDir);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('does not crash with a weird query', async () => {
       app = new UIServer(loadConfigs(argv, {}));
       k8sGetCustomObjectSpy.mockImplementation(() => Promise.resolve(newGetTensorboardResponse()));
@@ -348,6 +369,22 @@ describe('/apps/tensorboard', () => {
       await requests(app.app)
         .post('/apps/tensorboard?logdir=some-log-dir&namespace=test-ns')
         .expect(400, 'missing required argument: tfversion (tensorflow version) or image');
+    });
+
+    it('returns malformed pod template errors as plain text', async () => {
+      app = new UIServer(loadConfigs(argv, {}));
+      const malformedPodTemplate = '{"image":"<img src=x onerror=alert(1)>"';
+
+      const response = await requests(app.app)
+        .post(
+          `/apps/tensorboard?logdir=some-log-dir&namespace=test-ns&tfversion=2.0.0&podtemplatespec=${encodeURIComponent(
+            malformedPodTemplate,
+          )}`,
+        )
+        .expect(400);
+
+      expect(response.headers['content-type']).toMatch(/^text\/plain/);
+      expect(response.text).toContain('podtemplatespec is not valid JSON');
     });
 
     it('creates tensorboard viewer custom object and waits for it', async () => {
@@ -712,7 +749,7 @@ describe('/apps/tensorboard', () => {
         loadConfigs(argv, { VIEWER_TENSORBOARD_POD_TEMPLATE_SPEC_PATH: tempPath }),
       );
 
-      await requests(app.app)
+      const response = await requests(app.app)
         .post(
           `/apps/tensorboard?logdir=${encodeURIComponent(
             'volume://notexistvolume/logs/log-dir-1',
@@ -722,6 +759,7 @@ describe('/apps/tensorboard', () => {
           500,
           `Failed to start Tensorboard app: Cannot find file "volume://notexistvolume/logs/log-dir-1" in pod "unknown": volume "notexistvolume" not configured`,
         );
+      expect(response.headers['content-type']).toMatch(/^text\/plain/);
       expect(errorSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -845,6 +883,29 @@ describe('/apps/tensorboard', () => {
           },
         ]
       `);
+    });
+
+    it('returns delete failures as plain text', async () => {
+      const reflectedLogDir = '<img src=x onerror=alert(1)>';
+      k8sGetCustomObjectSpy.mockImplementation(() =>
+        Promise.resolve(
+          newGetTensorboardResponse({
+            name: 'viewer-abcdefg',
+            logDir: reflectedLogDir,
+          }),
+        ),
+      );
+      k8sDeleteCustomObjectSpy.mockRejectedValue(
+        new Error(`could not delete viewer for ${reflectedLogDir}`),
+      );
+
+      app = new UIServer(loadConfigs(argv, {}));
+      const response = await requests(app.app)
+        .delete(`/apps/tensorboard?logdir=${encodeURIComponent(reflectedLogDir)}&namespace=test-ns`)
+        .expect(500);
+
+      expect(response.headers['content-type']).toMatch(/^text\/plain/);
+      expect(response.text).toContain(reflectedLogDir);
     });
   });
 });
