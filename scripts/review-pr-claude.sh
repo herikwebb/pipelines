@@ -93,8 +93,10 @@ EOF
 
 python3 - "${PROMPT_FILE}" "${VERDICT_FILE}" > "${REVIEW_FILE}" <<'PY'
 import json
+import http.client
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -112,6 +114,7 @@ max_tokens = int(os.environ.get("CLAUDE_MAX_TOKENS", "32000"))
 # 120s was too tight and killed genuinely-in-progress requests, not stuck
 # ones -- match the Anthropic SDKs' own 10-minute default instead.
 request_timeout = int(os.environ.get("CLAUDE_REQUEST_TIMEOUT_SECONDS", "600"))
+request_attempts = int(os.environ.get("CLAUDE_REQUEST_ATTEMPTS", "3"))
 
 payload = {
     "model": model,
@@ -143,16 +146,25 @@ request = urllib.request.Request(
     method="POST",
 )
 
-try:
-    with urllib.request.urlopen(request, timeout=request_timeout) as response:
-        data = json.loads(response.read().decode("utf-8"))
-except urllib.error.HTTPError as error:
-    detail = error.read().decode("utf-8", errors="replace")
-    print(f"Anthropic API request failed with HTTP {error.code}: {detail}", file=sys.stderr)
-    raise SystemExit(1)
-except urllib.error.URLError as error:
-    print(f"Anthropic API request failed: {error}", file=sys.stderr)
-    raise SystemExit(1)
+for attempt in range(1, request_attempts + 1):
+    try:
+        with urllib.request.urlopen(request, timeout=request_timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        break
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        print(f"Anthropic API request failed with HTTP {error.code}: {detail}", file=sys.stderr)
+        raise SystemExit(1)
+    except (urllib.error.URLError, http.client.RemoteDisconnected, TimeoutError) as error:
+        if attempt == request_attempts:
+            print(f"Anthropic API request failed after {attempt} attempts: {error}", file=sys.stderr)
+            raise SystemExit(1)
+        delay = 5 * attempt
+        print(
+            f"Anthropic API request attempt {attempt} failed: {error}; retrying in {delay}s",
+            file=sys.stderr,
+        )
+        time.sleep(delay)
 
 parts = []
 for block in data.get("content", []):
