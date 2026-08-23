@@ -21,7 +21,7 @@ CLAUDE_MAX_TOKENS="${CLAUDE_MAX_TOKENS:-32000}"
 # window before a response arrived; ten lines keeps the review complete and
 # materially reduces latency.
 DIFF_CONTEXT_LINES="${CLAUDE_DIFF_CONTEXT_LINES:-10}"
-DIFF_LIMIT_BYTES="${DIFF_LIMIT_BYTES:-70000}"
+DIFF_LIMIT_BYTES="${DIFF_LIMIT_BYTES:-55000}"
 
 # Escape hatch: a maintainer-applied label lets a PR merge despite a
 # CHANGES_REQUESTED verdict. The reviewer is an LLM and will occasionally flag
