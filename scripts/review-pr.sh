@@ -15,7 +15,7 @@ OPENAI_REASONING_EFFORT="${OPENAI_REASONING_EFFORT:-high}"
 # gpt-5.6-sol is a reasoning model: max_output_tokens covers hidden reasoning
 # tokens too, so a small cap can be fully consumed before any review text
 # is emitted (an "incomplete" response). Give it enough headroom to finish.
-OPENAI_MAX_OUTPUT_TOKENS="${OPENAI_MAX_OUTPUT_TOKENS:-8000}"
+OPENAI_MAX_OUTPUT_TOKENS="${OPENAI_MAX_OUTPUT_TOKENS:-32000}"
 DIFF_LIMIT_BYTES="${DIFF_LIMIT_BYTES:-120000}"
 
 # Escape hatch: a maintainer-applied label lets a PR merge despite a
@@ -93,8 +93,10 @@ EOF
 
 python3 - "${PROMPT_FILE}" "${VERDICT_FILE}" > "${REVIEW_FILE}" <<'PY'
 import json
+import http.client
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -106,11 +108,12 @@ with open(prompt_path, "r", encoding="utf-8", errors="replace") as prompt_file:
 
 model = os.environ["OPENAI_MODEL"]
 reasoning_effort = os.environ.get("OPENAI_REASONING_EFFORT", "high")
-max_output_tokens = int(os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "8000"))
+max_output_tokens = int(os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "32000"))
 # High reasoning effort can legitimately run several minutes on a large diff
 # before the first byte of the response comes back. 120s was too tight and
 # killed genuinely-in-progress requests, not stuck ones.
 request_timeout = int(os.environ.get("OPENAI_REQUEST_TIMEOUT_SECONDS", "600"))
+request_attempts = int(os.environ.get("OPENAI_REQUEST_ATTEMPTS", "3"))
 
 payload = {
     "model": model,
@@ -140,16 +143,25 @@ request = urllib.request.Request(
     method="POST",
 )
 
-try:
-    with urllib.request.urlopen(request, timeout=request_timeout) as response:
-        data = json.loads(response.read().decode("utf-8"))
-except urllib.error.HTTPError as error:
-    detail = error.read().decode("utf-8", errors="replace")
-    print(f"OpenAI API request failed with HTTP {error.code}: {detail}", file=sys.stderr)
-    raise SystemExit(1)
-except urllib.error.URLError as error:
-    print(f"OpenAI API request failed: {error}", file=sys.stderr)
-    raise SystemExit(1)
+for attempt in range(1, request_attempts + 1):
+    try:
+        with urllib.request.urlopen(request, timeout=request_timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        break
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        print(f"OpenAI API request failed with HTTP {error.code}: {detail}", file=sys.stderr)
+        raise SystemExit(1)
+    except (urllib.error.URLError, http.client.RemoteDisconnected, TimeoutError) as error:
+        if attempt == request_attempts:
+            print(f"OpenAI API request failed after {attempt} attempts: {error}", file=sys.stderr)
+            raise SystemExit(1)
+        delay = 5 * attempt
+        print(
+            f"OpenAI API request attempt {attempt} failed: {error}; retrying in {delay}s",
+            file=sys.stderr,
+        )
+        time.sleep(delay)
 
 review = data.get("output_text")
 if not review:
