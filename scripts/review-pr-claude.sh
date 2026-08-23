@@ -16,7 +16,12 @@ CLAUDE_REASONING_EFFORT="${CLAUDE_REASONING_EFFORT:-high}"
 # fully consumed by reasoning before any review text is emitted. Give it
 # enough headroom to finish.
 CLAUDE_MAX_TOKENS="${CLAUDE_MAX_TOKENS:-32000}"
-DIFF_LIMIT_BYTES="${DIFF_LIMIT_BYTES:-120000}"
+# Keep all changed hunks while limiting unchanged context. Large 80-line-context
+# prompts repeatedly exceeded the provider's roughly five-minute connection
+# window before a response arrived; ten lines keeps the review complete and
+# materially reduces latency.
+DIFF_CONTEXT_LINES="${CLAUDE_DIFF_CONTEXT_LINES:-10}"
+DIFF_LIMIT_BYTES="${DIFF_LIMIT_BYTES:-70000}"
 
 # Escape hatch: a maintainer-applied label lets a PR merge despite a
 # CHANGES_REQUESTED verdict. The reviewer is an LLM and will occasionally flag
@@ -52,7 +57,7 @@ REVIEW_FILE="$(mktemp)"
 VERDICT_FILE="$(mktemp)"
 trap 'rm -f "${DIFF_FILE}" "${PROMPT_FILE}" "${REVIEW_FILE}" "${VERDICT_FILE}"' EXIT
 
-git diff --find-renames --unified=80 "${DIFF_RANGE[@]}" > "${DIFF_FILE}"
+git diff --find-renames --unified="${DIFF_CONTEXT_LINES}" "${DIFF_RANGE[@]}" > "${DIFF_FILE}"
 
 DIFF_BYTES="$(wc -c < "${DIFF_FILE}" | tr -d ' ')"
 if (( DIFF_BYTES > DIFF_LIMIT_BYTES )); then
