@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
+	"k8s.io/client-go/tools/cache"
 )
 
 func TestToWorkflowStatuses(t *testing.T) {
@@ -217,4 +218,83 @@ func TestLabelSelectorToGetWorkflows(t *testing.T) {
 	expected = expected.Add(*req)
 
 	assert.Equal(t, expected, *result)
+}
+
+// namespaceFilteringInformer is a fake ExecutionInformer that mimics a
+// namespaced lister: List only returns seeded workflows whose namespace matches
+// the requested namespace and whose labels match the selector.
+type namespaceFilteringInformer struct {
+	workflows commonutil.ExecutionSpecList
+}
+
+func (f *namespaceFilteringInformer) AddEventHandler(funcs cache.ResourceEventHandler) (
+	cache.ResourceEventHandlerRegistration, error) {
+	return nil, nil
+}
+
+func (f *namespaceFilteringInformer) HasSynced() func() bool {
+	return func() bool { return true }
+}
+
+func (f *namespaceFilteringInformer) Get(namespace string, name string) (commonutil.ExecutionSpec, bool, error) {
+	return nil, true, nil
+}
+
+func (f *namespaceFilteringInformer) List(namespace string, selector *labels.Selector) (
+	commonutil.ExecutionSpecList, error) {
+	result := commonutil.ExecutionSpecList{}
+	for _, wf := range f.workflows {
+		if wf.ExecutionNamespace() != namespace {
+			continue
+		}
+		if !(*selector).Matches(labels.Set(wf.ExecutionObjectMeta().Labels)) {
+			continue
+		}
+		result = append(result, wf)
+	}
+	return result, nil
+}
+
+func (f *namespaceFilteringInformer) InformerFactoryStart(stopCh <-chan struct{}) {}
+
+var _ commonutil.ExecutionInformer = &namespaceFilteringInformer{}
+
+// TestList_ScopedToNamespace asserts that two ScheduledWorkflows sharing the
+// same name in different namespaces do not count each other's workflows: List
+// must only return workflows from the requested namespace, even when workflows
+// in another namespace carry identical scheduledWorkflowName/workflowIndex
+// labels.
+func TestList_ScopedToNamespace(t *testing.T) {
+	sharedLabels := map[string]string{
+		commonutil.LabelKeyWorkflowScheduledWorkflowName: "SHARED_NAME",
+		commonutil.LabelKeyWorkflowIndex:                 "1",
+	}
+	workflowInNamespace := func(name, namespace string) commonutil.ExecutionSpec {
+		return commonutil.NewWorkflow(&workflowapi.Workflow{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+				Labels:    sharedLabels,
+			},
+		})
+	}
+	informer := &namespaceFilteringInformer{
+		workflows: commonutil.ExecutionSpecList{
+			workflowInNamespace("victim-run", "ns-a"),
+			workflowInNamespace("attacker-decoy", "ns-b"),
+		},
+	}
+	workflowClient := NewWorkflowClient(nil, informer)
+
+	// ns-a only sees its own workflow, not the identically labeled decoy in ns-b.
+	nsAResult, err := workflowClient.List("ns-a", "SHARED_NAME", false /* completed */, 0 /* minIndex */)
+	assert.Nil(t, err)
+	assert.Len(t, nsAResult, 1)
+	assert.Equal(t, "victim-run", nsAResult[0].Name)
+
+	// ns-b likewise only sees its own workflow.
+	nsBResult, err := workflowClient.List("ns-b", "SHARED_NAME", false, 0)
+	assert.Nil(t, err)
+	assert.Len(t, nsBResult, 1)
+	assert.Equal(t, "attacker-decoy", nsBResult[0].Name)
 }
