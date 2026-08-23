@@ -88,7 +88,7 @@
         "status": "active",
         "commit_hash": "7a20c635d3c778591e254fda0a81e05a5b0b5505",
         "detected_at_pst": "2026-07-22T06:27:33-07:00",
-        "reported_link": "https://github.com/herikwebb/pipelines/pull/100"
+        "reported_link": "https://github.com/kubeflow/pipelines/pull/14135"
     },
     {
         "title": "Cross-tenant archived pod-log disclosure: ml-pipeline-ui archive object key (createPodLogsMinioRequestConfig) is derived from caller-supplied podname/createdat and is not scoped to the authorized podnamespace, so an authenticated tenant can read another tenant's archived pod logs from the shared bucket in multi-user mode when ARGO_ARCHIVE_LOGS is enabled",
