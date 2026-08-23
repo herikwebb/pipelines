@@ -47,12 +47,23 @@ fi
 CHANGED_FILES="$(git diff --name-only "${DIFF_RANGE[@]}")"
 DIFF_STAT="$(git diff --stat "${DIFF_RANGE[@]}")"
 DIFF_FILE="$(mktemp)"
+IMPORT_CONTEXT_FILE="$(mktemp)"
 PROMPT_FILE="$(mktemp)"
 REVIEW_FILE="$(mktemp)"
 VERDICT_FILE="$(mktemp)"
-trap 'rm -f "${DIFF_FILE}" "${PROMPT_FILE}" "${REVIEW_FILE}" "${VERDICT_FILE}"' EXIT
+trap 'rm -f "${DIFF_FILE}" "${IMPORT_CONTEXT_FILE}" "${PROMPT_FILE}" "${REVIEW_FILE}" "${VERDICT_FILE}"' EXIT
 
 git diff --find-renames --unified=80 "${DIFF_RANGE[@]}" > "${DIFF_FILE}"
+
+while IFS= read -r changed_file; do
+  if [[ "${changed_file}" == *.go && -f "${changed_file}" ]]; then
+    {
+      echo "File: ${changed_file}"
+      sed -n '/^import (/,/^)/p' "${changed_file}"
+      echo
+    } >> "${IMPORT_CONTEXT_FILE}"
+  fi
+done <<< "${CHANGED_FILES}"
 
 DIFF_BYTES="$(wc -c < "${DIFF_FILE}" | tr -d ' ')"
 if (( DIFF_BYTES > DIFF_LIMIT_BYTES )); then
@@ -82,6 +93,12 @@ Diff stat:
 
 \`\`\`
 ${DIFF_STAT}
+\`\`\`
+
+Go import blocks from the checked-out head (authoritative when unified-diff context omits unchanged imports):
+
+\`\`\`go
+$(cat "${IMPORT_CONTEXT_FILE}")
 \`\`\`
 
 Unified diff:
