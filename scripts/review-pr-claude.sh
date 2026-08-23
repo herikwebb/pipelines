@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "Reviewing PR #${PR_NUMBER} in ${REPO}"
+echo "Reviewing PR #${PR_NUMBER} in ${REPO} (Claude)"
 echo "Base: ${BASE_SHA}"
 echo "Head: ${HEAD_SHA}"
 
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  echo "OPENAI_API_KEY is not set. Add it as a GitHub Actions secret." >&2
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  echo "ANTHROPIC_API_KEY is not set. Add it as a GitHub Actions secret." >&2
   exit 1
 fi
 
-OPENAI_MODEL="${OPENAI_MODEL:-gpt-5.6-sol}"
-OPENAI_REASONING_EFFORT="${OPENAI_REASONING_EFFORT:-high}"
-# gpt-5.6-sol is a reasoning model: max_output_tokens covers hidden reasoning
-# tokens too, so a small cap can be fully consumed before any review text
-# is emitted (an "incomplete" response). Give it enough headroom to finish.
-OPENAI_MAX_OUTPUT_TOKENS="${OPENAI_MAX_OUTPUT_TOKENS:-8000}"
+CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-5}"
+CLAUDE_REASONING_EFFORT="${CLAUDE_REASONING_EFFORT:-high}"
+# Adaptive thinking tokens count against max_tokens, so a small cap can be
+# fully consumed by reasoning before any review text is emitted. Give it
+# enough headroom to finish.
+CLAUDE_MAX_TOKENS="${CLAUDE_MAX_TOKENS:-32000}"
 DIFF_LIMIT_BYTES="${DIFF_LIMIT_BYTES:-120000}"
 
 # Escape hatch: a maintainer-applied label lets a PR merge despite a
@@ -104,18 +104,21 @@ verdict_path = sys.argv[2]
 with open(prompt_path, "r", encoding="utf-8", errors="replace") as prompt_file:
     prompt = prompt_file.read()
 
-model = os.environ["OPENAI_MODEL"]
-reasoning_effort = os.environ.get("OPENAI_REASONING_EFFORT", "high")
-max_output_tokens = int(os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "8000"))
-# High reasoning effort can legitimately run several minutes on a large diff
-# before the first byte of the response comes back. 120s was too tight and
-# killed genuinely-in-progress requests, not stuck ones.
-request_timeout = int(os.environ.get("OPENAI_REQUEST_TIMEOUT_SECONDS", "600"))
+model = os.environ["CLAUDE_MODEL"]
+reasoning_effort = os.environ.get("CLAUDE_REASONING_EFFORT", "high")
+max_tokens = int(os.environ.get("CLAUDE_MAX_TOKENS", "32000"))
+# Adaptive thinking at high/xhigh/max effort can legitimately run several
+# minutes on a large diff before the first byte of the response comes back.
+# 120s was too tight and killed genuinely-in-progress requests, not stuck
+# ones -- match the Anthropic SDKs' own 10-minute default instead.
+request_timeout = int(os.environ.get("CLAUDE_REQUEST_TIMEOUT_SECONDS", "600"))
 
 payload = {
     "model": model,
-    "reasoning": {"effort": reasoning_effort},
-    "instructions": (
+    "max_tokens": max_tokens,
+    "thinking": {"type": "adaptive"},
+    "output_config": {"effort": reasoning_effort},
+    "system": (
         "You are an expert automated pull request reviewer. "
         "Find concrete correctness, security, reliability, performance, and test-coverage issues. "
         "Prioritize actionable findings tied to changed code. "
@@ -126,15 +129,15 @@ payload = {
         "actionable findings that should block merge, or 'VERDICT: CHANGES_REQUESTED' when there are. "
         "Emit that verdict line last, on its own line, with nothing after it."
     ),
-    "input": prompt,
-    "max_output_tokens": max_output_tokens,
+    "messages": [{"role": "user", "content": prompt}],
 }
 
 request = urllib.request.Request(
-    "https://api.openai.com/v1/responses",
+    "https://api.anthropic.com/v1/messages",
     data=json.dumps(payload).encode("utf-8"),
     headers={
-        "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+        "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+        "anthropic-version": "2023-06-01",
         "Content-Type": "application/json",
     },
     method="POST",
@@ -145,39 +148,35 @@ try:
         data = json.loads(response.read().decode("utf-8"))
 except urllib.error.HTTPError as error:
     detail = error.read().decode("utf-8", errors="replace")
-    print(f"OpenAI API request failed with HTTP {error.code}: {detail}", file=sys.stderr)
+    print(f"Anthropic API request failed with HTTP {error.code}: {detail}", file=sys.stderr)
     raise SystemExit(1)
 except urllib.error.URLError as error:
-    print(f"OpenAI API request failed: {error}", file=sys.stderr)
+    print(f"Anthropic API request failed: {error}", file=sys.stderr)
     raise SystemExit(1)
 
-review = data.get("output_text")
-if not review:
-    parts = []
-    for item in data.get("output", []):
-        for content in item.get("content", []):
-            text = content.get("text")
-            if text:
-                parts.append(text)
-    review = "\n".join(parts)
+parts = []
+for block in data.get("content", []):
+    if block.get("type") == "text":
+        text = block.get("text")
+        if text:
+            parts.append(text)
+review = "\n".join(parts).strip()
 
-review = (review or "").strip()
 if not review:
-    # A 200 response with no usable text is a degenerate reply -- most often
-    # an incomplete reasoning-model response that spent its whole
-    # max_output_tokens budget on reasoning (status "incomplete", reason
-    # "max_output_tokens"), but it can also mean a schema change, content
-    # filter, or transient service anomaly. An empty response is NOT a clean
-    # review, so it must not become an APPROVE: silently approving would let
-    # a tooling failure pass the promotion gate with no substantive review.
-    # Stay fail-closed like an unrecognized verdict -- but instead of
-    # crashing with no output (an opaque red check), post an explanatory
-    # comment recording the reason and pointing at the override label for an
-    # intentional bypass. The raised default max_output_tokens above makes
-    # this path rare in the first place.
-    status = data.get("status")
-    reason = (data.get("incomplete_details") or {}).get("reason")
-    detail = f" (status: {status}, reason: {reason})" if status else ""
+    # A 200 response with no usable text is a degenerate reply -- most often a
+    # refusal (stop_reason "refusal") or a response that spent its whole
+    # max_tokens budget on thinking before any text block was emitted
+    # (stop_reason "max_tokens"), but it can also mean a transient service
+    # anomaly. An empty response is NOT a clean review, so it must not become
+    # an APPROVE: silently approving would let a tooling failure pass the
+    # promotion gate with no substantive review. Stay fail-closed like an
+    # unrecognized verdict -- but instead of crashing with no output (an
+    # opaque red check), post an explanatory comment recording the reason and
+    # pointing at the override label for an intentional bypass.
+    stop_reason = data.get("stop_reason")
+    stop_details = data.get("stop_details") or {}
+    category = stop_details.get("category")
+    detail = f" (stop_reason: {stop_reason}" + (f", category: {category}" if category else "") + ")" if stop_reason else ""
     with open(verdict_path, "w", encoding="utf-8") as verdict_file:
         verdict_file.write("CHANGES_REQUESTED")
     print(
@@ -220,9 +219,9 @@ Gate override: \`${OVERRIDE_LABEL}\` label present — merge not blocked by this
 fi
 
 BODY=$(cat <<EOF
-## Automated PR Review
+## Automated PR Review (Claude)
 
-Model: \`${OPENAI_MODEL}\`
+Model: \`${CLAUDE_MODEL}\`
 Verdict: \`${VERDICT}\`${OVERRIDE_NOTE}
 
 Changed files:
