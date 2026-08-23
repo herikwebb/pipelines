@@ -114,7 +114,7 @@ func MutatePodIfCached(req *v1beta1.AdmissionRequest, clientMgr ClientManagerInt
 		namespace = pod.Namespace
 	}
 	if namespace == "" {
-		log.Printf("Unable to generate cache key for pod %s: namespace is empty", pod.ObjectMeta.Name)
+		log.Printf("Unable to generate cache key for pod %s: namespace is empty", pod.Name)
 		return patches, nil
 	}
 
