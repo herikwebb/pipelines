@@ -11,7 +11,7 @@ if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
 fi
 
 CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-5}"
-CLAUDE_REASONING_EFFORT="${CLAUDE_REASONING_EFFORT:-high}"
+CLAUDE_REASONING_EFFORT="${CLAUDE_REASONING_EFFORT:-medium}"
 # Adaptive thinking tokens count against max_tokens, so a small cap can be
 # fully consumed by reasoning before any review text is emitted. Give it
 # enough headroom to finish.
@@ -129,7 +129,7 @@ with open(prompt_path, "r", encoding="utf-8", errors="replace") as prompt_file:
     prompt = prompt_file.read()
 
 model = os.environ["CLAUDE_MODEL"]
-reasoning_effort = os.environ.get("CLAUDE_REASONING_EFFORT", "high")
+reasoning_effort = os.environ.get("CLAUDE_REASONING_EFFORT", "medium")
 max_tokens = int(os.environ.get("CLAUDE_MAX_TOKENS", "32000"))
 # Adaptive thinking at high/xhigh/max effort can legitimately run several
 # minutes on a large diff before the first byte of the response comes back.
