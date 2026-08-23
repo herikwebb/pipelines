@@ -110,7 +110,7 @@
         "status": "active",
         "commit_hash": "93d56b5044b045f3448349e1463c2511f3fdca0f",
         "detected_at_pst": "2026-08-01T06:27:05-07:00",
-        "reported_link": "https://github.com/herikwebb/pipelines/pull/108"
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/116"
     },
     {
         "title": "Un-namespaced /ml_metadata.* gRPC-web proxy in frontend server exposes cross-tenant MLMD metadata (artifact URIs, run params/metrics, pipeline names) in multi-user mode \u2014 KNOWN/ACCEPTED upstream limitation (issue #4790); MLMD has no tenancy model and no minimal fix exists, so not filed as a PR",
