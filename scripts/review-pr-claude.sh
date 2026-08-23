@@ -133,6 +133,8 @@ payload = {
         "If you find issues, return a concise Markdown review with severity, file path, and rationale. "
         "If you do not find any issues, say that no automated findings were found and mention residual risks briefly. "
         "Do not invent line numbers when the diff does not provide enough context. "
+        "Unified diffs omit unchanged content outside each hunk; never claim an import, declaration, or guard is missing "
+        "solely because it is absent from the displayed context. Treat insufficient diff evidence as non-blocking. "
         "End your reply with a final line containing exactly 'VERDICT: APPROVE' when there are no "
         "actionable findings that should block merge, or 'VERDICT: CHANGES_REQUESTED' when there are. "
         "Emit that verdict line last, on its own line, with nothing after it."
