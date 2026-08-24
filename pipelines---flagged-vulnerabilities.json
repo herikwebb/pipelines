@@ -183,5 +183,13 @@
         "commit_hash": "7b70c7b95f6832772efd6fd0029a4024491a0f44",
         "detected_at_pst": "2026-08-22T06:35:00-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/126"
+    },
+    {
+        "title": "Cross-tenant object-store artifact disclosure in the v2 launcher: fetchNonDefaultBuckets lends the run's default (shared) object-store session to an author-controlled input-artifact URI (e.g. a dsl.importer artifact_uri stored verbatim in MLMD) that resolves to the same bucket but outside this run's pipeline-root prefix, so a multi-user tenant isolated by per-namespace object-store prefix can read another prefix's artifacts with the shared credentials via DownloadBlob prefix listing \u2014 reviewed fork PR open, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "b4397cd2b8d53cfc28cdcec56ad8d83c8413d15b",
+        "detected_at_pst": "2026-08-24T06:53:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/129",
+        "primary_location": "backend/src/v2/component/launcher_v2.go"
     }
 ]
