@@ -720,6 +720,12 @@ func (s *RunStore) UpdateRun(run *model.Run) error {
 		"FinishedAtInSec":         run.FinishedAtInSec,
 		"WorkflowRuntimeManifest": run.WorkflowRuntimeManifest,
 	}
+	if run.K8SName != "" {
+		updateFields["Name"] = run.K8SName
+	}
+	if run.Namespace != "" {
+		updateFields["Namespace"] = run.Namespace
+	}
 	// PluginsOutput is only updated when explicitly set by the caller (e.g.
 	// MLflow terminal sync, retry). A nil pointer means "leave unchanged" so
 	// that normal state-update callers don't accidentally overwrite it.
