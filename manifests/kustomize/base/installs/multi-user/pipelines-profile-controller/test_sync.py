@@ -100,6 +100,14 @@ ENV_IMAGES_WITH_TAGS_AND_ISTIO = dict(ENV_IMAGES_WITH_TAGS,
                                       }
                                       )
 
+ENV_ARTIFACT_PROXY_WITH_ALLOWED_ENDPOINTS = dict(
+    ENV_KFP_VERSION_ONLY,
+    **{
+        "ALLOWED_ARTIFACT_ENDPOINTS": "https://objects.example.com:9443",
+        "ARTIFACTS_PROXY_ENABLED": "true",
+    }
+)
+
 
 def generate_image_name(imagename, tag):
     return f"{str(imagename)}:{str(tag)}"
@@ -285,6 +293,45 @@ def test_sync_server_without_pipeline_enabled(sync_server, data, expected_status
     # Test overall status of whether children are ok
     assert results['status'] == expected_status
     assert results['children'] == expected_children
+
+
+@pytest.mark.parametrize(
+    "sync_server",
+    [ENV_ARTIFACT_PROXY_WITH_ALLOWED_ENDPOINTS],
+    indirect=True,
+)
+def test_artifact_proxy_receives_allowed_endpoints(sync_server):
+    server, _ = sync_server
+    url = f"http://{server.server_address[0]}:{str(server.server_address[1])}"
+    existing_secret = {
+        'apiVersion': 'v1',
+        'kind': 'Secret',
+        'metadata': {
+            'name': 'mlpipeline-minio-artifact',
+            'namespace': 'myName',
+        },
+    }
+    response = requests.post(url, json={
+        'object': DATA_CORRECT_CHILDREN['parent'],
+        'attachments': {
+            'Secret.v1': {'myName/mlpipeline-minio-artifact': existing_secret},
+            'ConfigMap.v1': {},
+            'Deployment.apps/v1': {},
+            'Service.v1': {},
+        },
+    })
+    results = json.loads(response.text)
+    artifact_deployment = next(
+        child for child in results['attachments']
+        if child.get('kind') == 'Deployment'
+        and child.get('metadata', {}).get('name') == 'ml-pipeline-ui-artifact'
+    )
+    container_env = artifact_deployment['spec']['template']['spec']['containers'][0]['env']
+
+    assert {
+        'name': 'ALLOWED_ARTIFACT_ENDPOINTS',
+        'value': 'https://objects.example.com:9443',
+    } in container_env
 
 
 def test_create_iam_client_uses_endpoint(monkeypatch):

@@ -33,6 +33,49 @@ def _normalize_domain(domain):
     return domain if domain.startswith('.') else '.' + domain
 
 
+def artifact_server_environment(namespace, cluster_domain, allowed_artifact_endpoints):
+    return [
+        {
+            "name": "MINIO_ACCESS_KEY",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "key": "accesskey",
+                    "name": "mlpipeline-minio-artifact"
+                }
+            }
+        },
+        {
+            "name": "MINIO_SECRET_KEY",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "key": "secretkey",
+                    "name": "mlpipeline-minio-artifact"
+                }
+            }
+        },
+        {
+            "name": "ML_PIPELINE_SERVICE_HOST",
+            "value": f"ml-pipeline.kubeflow{_normalize_domain(cluster_domain)}"
+        },
+        {
+            "name": "ML_PIPELINE_SERVICE_PORT",
+            "value": "8888"
+        },
+        {
+            "name": "FRONTEND_SERVER_NAMESPACE",
+            "value": namespace,
+        },
+        {
+            "name": "CLUSTER_DOMAIN",
+            "value": cluster_domain,
+        },
+        {
+            "name": "ALLOWED_ARTIFACT_ENDPOINTS",
+            "value": allowed_artifact_endpoints,
+        },
+    ]
+
+
 def create_iam_client():
     # To interact with SeaweedFS user management. Region does not matter.
     endpoint_url = os.environ.get("AWS_ENDPOINT_URL")
@@ -55,6 +98,7 @@ def get_settings_from_env(controller_port=None,
                           frontend_tag=None,
                           disable_istio_sidecar=None,
                           artifacts_proxy_enabled=None,
+                          allowed_artifact_endpoints=None,
                           artifact_retention_days=None,
                           cluster_domain=None,
                           object_store_host=None):
@@ -82,6 +126,10 @@ def get_settings_from_env(controller_port=None,
     settings["artifacts_proxy_enabled"] = \
         artifacts_proxy_enabled or \
         os.environ.get("ARTIFACTS_PROXY_ENABLED", "false")
+
+    settings["allowed_artifact_endpoints"] = \
+        allowed_artifact_endpoints if allowed_artifact_endpoints is not None \
+            else os.environ.get("ALLOWED_ARTIFACT_ENDPOINTS", "")
 
     settings["artifact_retention_days"] = \
         artifact_retention_days or \
@@ -115,6 +163,7 @@ def server_factory(frontend_image,
                    disable_istio_sidecar,
                    artifacts_proxy_enabled,
                    artifact_retention_days,
+                   allowed_artifact_endpoints="",
                    cluster_domain=".svc.cluster.local",
                    object_store_host="seaweedfs",
                    url="",
@@ -370,42 +419,11 @@ def server_factory(frontend_image,
                                         "ports": [{
                                             "containerPort": 3000
                                         }],
-                                        "env": [
-                                            {
-                                                "name": "MINIO_ACCESS_KEY",
-                                                "valueFrom": {
-                                                    "secretKeyRef": {
-                                                        "key": "accesskey",
-                                                        "name": "mlpipeline-minio-artifact"
-                                                    }
-                                                }
-                                            },
-                                            {
-                                                "name": "MINIO_SECRET_KEY",
-                                                "valueFrom": {
-                                                    "secretKeyRef": {
-                                                        "key": "secretkey",
-                                                        "name": "mlpipeline-minio-artifact"
-                                                    }
-                                                }
-                                            },
-                                            {
-                                                "name": "ML_PIPELINE_SERVICE_HOST",
-                                                "value": f"ml-pipeline.kubeflow{_normalize_domain(cluster_domain)}"
-                                            },
-                                            {
-                                                "name": "ML_PIPELINE_SERVICE_PORT",
-                                                "value": "8888"
-                                            },
-                                            {
-                                                "name": "FRONTEND_SERVER_NAMESPACE",
-                                                "value": namespace,
-                                            },
-                                            {
-                                                "name": "CLUSTER_DOMAIN",
-                                                "value": cluster_domain,
-                                            }
-                                        ],
+                                        "env": artifact_server_environment(
+                                            namespace,
+                                            cluster_domain,
+                                            allowed_artifact_endpoints,
+                                        ),
                                         "resources": {
                                             "requests": {
                                                 "cpu": "10m",

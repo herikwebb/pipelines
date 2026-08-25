@@ -27,9 +27,11 @@ import {
   Credentials,
 } from './minio-helper.js';
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
+import { getK8sSecret } from './k8s-helper.js';
 
 vi.mock('minio');
 vi.mock('@aws-sdk/credential-providers');
+vi.mock('./k8s-helper.js');
 
 describe('minio-helper', () => {
   const MockedMinioClient: Mock = MinioClient as any;
@@ -40,6 +42,76 @@ describe('minio-helper', () => {
   });
 
   describe('createMinioClient', () => {
+    it.each([
+      ['missing Params', { Provider: 's3' }],
+      ['null Params', { Params: null, Provider: 's3' }],
+      ['array Params', { Params: [], Provider: 's3' }],
+    ])('rejects provider info with %s', async (_name, providerInfo) => {
+      await expect(
+        createMinioClient(
+          { endPoint: 's3.amazonaws.com' },
+          's3',
+          JSON.stringify(providerInfo),
+          'kubeflow',
+        ),
+      ).rejects.toThrow('Invalid provider info');
+      expect(MockedMinioClient).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, null, false, 1, 'yes'])(
+      'rejects invalid fromEnv value %j',
+      async (fromEnv) => {
+        await expect(
+          createMinioClient(
+            { endPoint: 's3.amazonaws.com' },
+            's3',
+            JSON.stringify({ Params: { fromEnv }, Provider: 's3' }),
+            'kubeflow',
+          ),
+        ).rejects.toThrow('Provider info fromEnv must be true or false');
+        expect(MockedMinioClient).not.toHaveBeenCalled();
+      },
+    );
+
+    it('does not mutate shared defaults when applying request provider info', async () => {
+      const defaults = {
+        accessKey: 'default-access',
+        endPoint: 's3.amazonaws.com',
+        port: 443,
+        region: 'us-east-1',
+        secretKey: 'default-secret',
+        useSSL: true,
+      };
+      (getK8sSecret as Mock).mockResolvedValue('request-secret');
+
+      await createMinioClient(
+        defaults,
+        's3',
+        JSON.stringify({
+          Provider: 's3',
+          Params: {
+            accessKeyKey: 'access',
+            disableSSL: 'true',
+            endpoint: 'http://store.example.com:9000',
+            fromEnv: 'false',
+            region: 'custom',
+            secretKeyKey: 'secret',
+            secretName: 'credentials',
+          },
+        }),
+        'kubeflow',
+      );
+
+      expect(defaults).toEqual({
+        accessKey: 'default-access',
+        endPoint: 's3.amazonaws.com',
+        port: 443,
+        region: 'us-east-1',
+        secretKey: 'default-secret',
+        useSSL: true,
+      });
+    });
+
     it('creates a minio client with the provided configs.', async () => {
       const client = await createMinioClient(
         {
@@ -118,6 +190,75 @@ describe('minio-helper', () => {
         sessionToken: 'SessionToken',
       });
       expect(MockedMinioClient).toBeCalledTimes(1);
+    });
+
+    it('uses the AWS credential chain for S3 acceleration endpoints.', async () => {
+      (fromNodeProviderChain as Mock).mockImplementation(
+        () => () =>
+          Promise.resolve({
+            accessKeyId: 'AccessKeyId',
+            secretAccessKey: 'SecretAccessKey',
+            sessionToken: 'SessionToken',
+          }),
+      );
+
+      await createMinioClient({ endPoint: 's3-accelerate.amazonaws.com' }, 's3');
+
+      expect(fromNodeProviderChain).toHaveBeenCalledWith({ ignoreCache: true });
+      expect(MockedMinioClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accessKey: 'AccessKeyId',
+          endPoint: 's3-accelerate.amazonaws.com',
+          secretKey: 'SecretAccessKey',
+        }),
+      );
+    });
+
+    it('preserves the configured AWS region when provider info omits a region.', async () => {
+      (getK8sSecret as Mock).mockResolvedValue('request-secret');
+
+      await createMinioClient(
+        { endPoint: 's3.amazonaws.com', region: 'eu-west-2' },
+        's3',
+        JSON.stringify({
+          Provider: 's3',
+          Params: {
+            accessKeyKey: 'access',
+            fromEnv: 'false',
+            secretKeyKey: 'secret',
+            secretName: 'credentials',
+          },
+        }),
+        'kubeflow',
+      );
+
+      expect(MockedMinioClient).toHaveBeenCalledWith(
+        expect.objectContaining({ region: 'eu-west-2' }),
+      );
+    });
+
+    it('rejects an insecure AWS provider endpoint before reading its Secret', async () => {
+      await expect(
+        createMinioClient(
+          { endPoint: 's3.amazonaws.com' },
+          's3',
+          JSON.stringify({
+            Provider: 's3',
+            Params: {
+              accessKeyKey: 'access',
+              disableSSL: 'true',
+              endpoint: 'http://s3.amazonaws.com:80',
+              fromEnv: 'false',
+              secretKeyKey: 'secret',
+              secretName: 'credentials',
+            },
+          }),
+          'kubeflow',
+        ),
+      ).rejects.toThrow('AWS S3 provider endpoints must use HTTPS');
+
+      expect(getK8sSecret).not.toHaveBeenCalled();
+      expect(MockedMinioClient).not.toHaveBeenCalled();
     });
 
     it('rewrites configured in-cluster endpoints to local proxy endpoints.', async () => {
