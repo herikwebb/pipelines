@@ -8,6 +8,8 @@ spec:
       containers:
       - name: ml-pipeline-scheduledworkflow
         env:
+        - name: MULTI_USER_MODE
+          value: "true"
         - name: NAMESPACE
           value: '' # Empty namespace lets viewer controller watch all namespaces
           valueFrom: null # HACK: https://github.com/kubernetes-sigs/kustomize/issues/2606
@@ -22,14 +24,13 @@ spec:
         # USER_IDENTITY_HEADER is sourced from the shared pipeline-install-config
         # ConfigMap so it stays in synchronization with the API server's
         # USERID_HEADER; operators patch the ConfigMap once to update both
-        # deployments. If the key is unset, USER_IDENTITY_HEADER will be empty and
-        # the controller will not inject a user identity header.
+        # deployments. This key is required in multi-user mode so the controller
+        # cannot silently submit privileged requests without tenant identity.
         - name: USER_IDENTITY_HEADER
           valueFrom:
             configMapKeyRef:
               name: pipeline-install-config
               key: USERID_HEADER
-              optional: true
         # SERVICE_ACCOUNT_NAME is resolved at runtime via the downward API so
         # renamed service accounts are handled automatically.
         - name: SERVICE_ACCOUNT_NAME

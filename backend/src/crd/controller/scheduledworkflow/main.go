@@ -55,6 +55,7 @@ var (
 	recurringRunResyncIntervalSeconds int
 	userIdentityHeader                string
 	userIdentityValue                 string
+	multiUserMode                     bool
 )
 
 const (
@@ -139,6 +140,18 @@ func main() {
 	}
 
 	runClient := api.NewRunServiceClient(apiConnection)
+	experimentClient := api.NewExperimentServiceClient(apiConnection)
+	pipelineClient := api.NewPipelineServiceClient(apiConnection)
+
+	// Before MULTI_USER_MODE was introduced, the presence of both identity
+	// settings was the scheduled-workflow controller's multi-user signal. Keep
+	// those existing overlays safe on upgrade while making the base multi-user
+	// manifest explicit. Partial identity configuration is still rejected by
+	// NewController.
+	effectiveMultiUserMode := resolveMultiUserMode(multiUserMode, userIdentityHeader, userIdentityValue)
+	if effectiveMultiUserMode && !multiUserMode {
+		log.Warn("MULTI_USER_MODE is unset but both legacy user identity settings are configured; enabling multi-user namespace validation for backward compatibility. If the API server is single-user, remove USER_IDENTITY_HEADER and USER_IDENTITY_VALUE or explicitly align the controller configuration before upgrading; inferred multi-user mode rejects experiments with empty namespaces")
+	}
 
 	log.Info("Successfully connected to the API server")
 
@@ -147,11 +160,14 @@ func main() {
 		scheduleClient,
 		execClient,
 		runClient,
+		experimentClient,
+		pipelineClient,
 		scheduleInformerFactory,
 		execInformer,
 		commonutil.NewRealTime(),
 		location,
 		tokenSrc,
+		effectiveMultiUserMode,
 		userIdentityHeader,
 		userIdentityValue,
 	)
@@ -167,6 +183,13 @@ func main() {
 	if err = controller.Run(2, stopCh); err != nil {
 		log.Fatalf("Error running controller: %s", err.Error())
 	}
+}
+
+// resolveMultiUserMode preserves overlays from before MULTI_USER_MODE existed.
+// Operators of single-user installations must remove both legacy identity
+// settings; retaining them intentionally fails closed as multi-user mode.
+func resolveMultiUserMode(explicitMode bool, identityHeader, identityValue string) bool {
+	return explicitMode || (identityHeader != "" && identityValue != "")
 }
 
 func startMetricsServer() {
@@ -213,6 +236,7 @@ func init() {
 	flag.IntVar(&recurringRunResyncIntervalSeconds, "recurringRunResyncIntervalSeconds", 30, "The full resync interval in seconds for recurring run reconciliations.")
 	flag.StringVar(&userIdentityHeader, "userIdentityHeader", "", "User identity metadata key for multi-user mode (e.g. kubeflow-userid). If set, the controller injects this key into the outgoing gRPC metadata when calling the API server. The key is normalized to lowercase and must be a valid gRPC metadata key.")
 	flag.StringVar(&userIdentityValue, "userIdentityValue", "", "Value for the user identity gRPC metadata key (e.g. system:serviceaccount:kubeflow:ml-pipeline-scheduledworkflow).")
+	flag.BoolVar(&multiUserMode, "multiUserMode", false, "Enable multi-user namespace isolation checks. Requires both userIdentityHeader and userIdentityValue.")
 	var err error
 	location, err = util.GetLocation()
 	if err != nil {

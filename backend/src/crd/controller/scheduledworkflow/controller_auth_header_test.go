@@ -96,8 +96,9 @@ func newTestSWFForAPIPath() *util.ScheduledWorkflow {
 			UID:       "test-uid",
 		},
 		Spec: swfapi.ScheduledWorkflowSpec{
-			PipelineId: "pipeline-123",
-			Workflow:   &swfapi.WorkflowResource{},
+			ExperimentId: "experiment-kubeflow",
+			PipelineId:   "pipeline-123",
+			Workflow:     &swfapi.WorkflowResource{},
 		},
 	})
 }
@@ -110,6 +111,9 @@ func TestUserIdentityHeader_BothSet(test *testing.T) {
 	controller := &Controller{
 		workflowClient:     client.NewWorkflowClient(&fakeExecutionClient{}, &fakeExecutionInformer{}),
 		runClient:          fakeRun,
+		experimentClient:   &fakeExperimentServiceClient{namespace: "kubeflow"},
+		pipelineClient:     &fakePipelineServiceClient{namespace: "kubeflow"},
+		multiUserMode:      true,
 		userIdentityHeader: "kubeflow-userid",
 		userIdentityValue:  "system:serviceaccount:kubeflow:ml-pipeline-scheduledworkflow",
 	}
@@ -152,52 +156,6 @@ func TestUserIdentityHeader_BothEmpty(test *testing.T) {
 	}
 }
 
-// TestUserIdentityHeader_OnlyOneSet verifies that when only one of the two
-// fields is set, no header is injected (the guard requires both).
-func TestUserIdentityHeader_OnlyOneSet(test *testing.T) {
-	tests := []struct {
-		name   string
-		header string
-		value  string
-	}{
-		{
-			name:   "header set, value empty",
-			header: "kubeflow-userid",
-			value:  "",
-		},
-		{
-			name:   "header empty, value set",
-			header: "",
-			value:  "system:serviceaccount:kubeflow:ml-pipeline-scheduledworkflow",
-		},
-	}
-
-	for _, testCase := range tests {
-		test.Run(testCase.name, func(test *testing.T) {
-			fakeRun := &fakeRunServiceClient{}
-			controller := &Controller{
-				workflowClient:     client.NewWorkflowClient(&fakeExecutionClient{}, &fakeExecutionInformer{}),
-				runClient:          fakeRun,
-				userIdentityHeader: testCase.header,
-				userIdentityValue:  testCase.value,
-			}
-
-			swf := newTestSWFForAPIPath()
-			submitted, _, err := controller.submitNewWorkflowIfNotAlreadySubmitted(
-				context.Background(), swf, 100, 200)
-
-			require.NoError(test, err)
-			assert.True(test, submitted)
-
-			md, ok := metadata.FromOutgoingContext(fakeRun.capturedCtx)
-			if ok {
-				assert.Empty(test, md.Get("kubeflow-userid"),
-					"expected no kubeflow-userid header when only one field is set")
-			}
-		})
-	}
-}
-
 // TestUserIdentityHeader_CoexistsWithBearerToken verifies that both the
 // Authorization: Bearer header and the user identity header are present on
 // the outgoing context when tokenSrc is non-nil and identity fields are set.
@@ -206,7 +164,10 @@ func TestUserIdentityHeader_CoexistsWithBearerToken(test *testing.T) {
 	controller := &Controller{
 		workflowClient:     client.NewWorkflowClient(&fakeExecutionClient{}, &fakeExecutionInformer{}),
 		runClient:          fakeRun,
+		experimentClient:   &fakeExperimentServiceClient{namespace: "kubeflow"},
+		pipelineClient:     &fakePipelineServiceClient{namespace: "kubeflow"},
 		tokenSrc:           &fakeTokenSource{token: "my-sa-token"},
+		multiUserMode:      true,
 		userIdentityHeader: "kubeflow-userid",
 		userIdentityValue:  "system:serviceaccount:kubeflow:ml-pipeline-scheduledworkflow",
 	}
@@ -271,14 +232,101 @@ func TestNewController_InvalidUserIdentityHeader(test *testing.T) {
 		nil, // swfClientSet
 		nil, // workflowClientSet
 		nil, // runClient
+		nil, // experimentClient
+		nil, // pipelineClient
 		nil, // swfInformerFactory
 		nil, // executionInformer
 		nil, // time
 		nil, // location
 		nil, // tokenSrc
+		true,
 		"invalid header",
 		"some-value",
 	)
 	require.Error(test, err)
 	assert.Contains(test, err.Error(), "invalid userIdentityHeader")
+}
+
+func TestNewController_RejectsInconsistentMultiUserIdentityConfiguration(test *testing.T) {
+	tests := []struct {
+		name               string
+		multiUserMode      bool
+		userIdentityHeader string
+		userIdentityValue  string
+		wantError          string
+	}{
+		{
+			name:          "multi-user identity missing with token authentication",
+			multiUserMode: true,
+			wantError:     "multiUserMode requires",
+		},
+		{
+			name:               "identity header only",
+			multiUserMode:      true,
+			userIdentityHeader: "kubeflow-userid",
+			wantError:          "must either both be set",
+		},
+		{
+			name:              "identity value only",
+			multiUserMode:     true,
+			userIdentityValue: "controller-identity",
+			wantError:         "must either both be set",
+		},
+		{
+			name:               "identity configured without multi-user mode",
+			userIdentityHeader: "kubeflow-userid",
+			userIdentityValue:  "controller-identity",
+			wantError:          "require multiUserMode",
+		},
+	}
+
+	for _, testCase := range tests {
+		test.Run(testCase.name, func(test *testing.T) {
+			_, err := NewController(
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				&fakeTokenSource{token: "controller-token"},
+				testCase.multiUserMode,
+				testCase.userIdentityHeader,
+				testCase.userIdentityValue,
+			)
+			require.Error(test, err)
+			assert.Contains(test, err.Error(), testCase.wantError)
+		})
+	}
+}
+
+func TestResolveMultiUserMode(test *testing.T) {
+	tests := []struct {
+		name           string
+		explicitMode   bool
+		identityHeader string
+		identityValue  string
+		want           bool
+	}{
+		{name: "single-user defaults", want: false},
+		{name: "explicit multi-user", explicitMode: true, want: true},
+		{
+			name:           "legacy identity configuration",
+			identityHeader: "kubeflow-userid",
+			identityValue:  "controller-identity",
+			want:           true,
+		},
+		{name: "partial identity does not infer", identityHeader: "kubeflow-userid", want: false},
+	}
+
+	for _, testCase := range tests {
+		test.Run(testCase.name, func(test *testing.T) {
+			assert.Equal(test, testCase.want, resolveMultiUserMode(
+				testCase.explicitMode, testCase.identityHeader, testCase.identityValue))
+		})
+	}
 }

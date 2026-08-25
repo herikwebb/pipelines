@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -36,7 +37,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	log "github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 	corev1 "k8s.io/api/core/v1"
@@ -56,8 +60,9 @@ import (
 )
 
 const (
-	Workflow          = "Workflow"
-	ScheduledWorkflow = "ScheduledWorkflow"
+	Workflow                     = "Workflow"
+	ScheduledWorkflow            = "ScheduledWorkflow"
+	tenantReferenceLookupTimeout = 30 * time.Second
 )
 
 var (
@@ -91,10 +96,12 @@ var (
 
 // Controller is the controller implementation for ScheduledWorkflow resources
 type Controller struct {
-	kubeClient     *client.KubeClient
-	swfClient      *client.ScheduledWorkflowClient
-	workflowClient *client.WorkflowClient
-	runClient      api.RunServiceClient
+	kubeClient       *client.KubeClient
+	swfClient        *client.ScheduledWorkflowClient
+	workflowClient   *client.WorkflowClient
+	runClient        api.RunServiceClient
+	experimentClient api.ExperimentServiceClient
+	pipelineClient   pipelineServiceClient
 
 	// workqueue is a rate limited work queue. This is used to queue work to be
 	// processed instead of performing it as soon as a change happens. This
@@ -112,12 +119,49 @@ type Controller struct {
 	// tokenSrc provides a way to get the latest refreshed token when authentication to the REST API server is enabled.
 	// This will be nil when authentication is not enabled.
 	tokenSrc transport.ResettableTokenSource
+	// multiUserMode enables tenant namespace-isolation checks independently of
+	// the API authentication mechanism.
+	multiUserMode bool
 
 	// userIdentityHeader is the outgoing gRPC metadata key for user identity in multi-user mode
 	// (e.g. "kubeflow-userid"). It is normalized to lowercase and validated when the controller is created.
 	userIdentityHeader string
 	// userIdentityValue is the value to set for the user identity gRPC metadata key.
 	userIdentityValue string
+}
+
+// pipelineServiceClient contains the pipeline lookups needed to validate that
+// a ScheduledWorkflow cannot use the controller identity to read a private
+// pipeline from another namespace.
+type pipelineServiceClient interface {
+	GetPipeline(context.Context, *api.GetPipelineRequest, ...grpc.CallOption) (*api.Pipeline, error)
+	GetPipelineVersion(context.Context, *api.GetPipelineVersionRequest, ...grpc.CallOption) (*api.PipelineVersion, error)
+}
+
+type permanentSubmissionError struct {
+	err error
+}
+
+func (e *permanentSubmissionError) Error() string { return e.err.Error() }
+func (e *permanentSubmissionError) Unwrap() error { return e.err }
+
+func permanentSubmissionErrorf(format string, args ...interface{}) error {
+	return &permanentSubmissionError{err: fmt.Errorf(format, args...)}
+}
+
+func isPermanentSubmissionError(err error) bool {
+	var permanentErr *permanentSubmissionError
+	return errors.As(err, &permanentErr)
+}
+
+func tenantLookupError(err error, format string, args ...interface{}) error {
+	wrapped := fmt.Errorf(format+": %w", append(args, err)...)
+	switch grpcstatus.Code(err) {
+	case codes.InvalidArgument, codes.NotFound, codes.PermissionDenied:
+		return &permanentSubmissionError{err: wrapped}
+	default:
+		return wrapped
+	}
 }
 
 // gRPC metadata keys are limited to lowercase ASCII letters, digits, and the
@@ -148,14 +192,26 @@ func NewController(
 	swfClientSet swfclientset.Interface,
 	workflowClientSet commonutil.ExecutionClient,
 	runClient api.RunServiceClient,
+	experimentClient api.ExperimentServiceClient,
+	pipelineClient pipelineServiceClient,
 	swfInformerFactory swfinformers.SharedInformerFactory,
 	executionInformer commonutil.ExecutionInformer,
 	time commonutil.TimeInterface,
 	location *time.Location,
 	tokenSrc transport.ResettableTokenSource,
+	multiUserMode bool,
 	userIdentityHeader string,
 	userIdentityValue string,
 ) (*Controller, error) {
+	if (userIdentityHeader == "") != (userIdentityValue == "") {
+		return nil, fmt.Errorf("userIdentityHeader and userIdentityValue must either both be set or both be empty")
+	}
+	if multiUserMode && userIdentityHeader == "" {
+		return nil, fmt.Errorf("multiUserMode requires userIdentityHeader and userIdentityValue")
+	}
+	if !multiUserMode && userIdentityHeader != "" {
+		return nil, fmt.Errorf("userIdentityHeader and userIdentityValue require multiUserMode")
+	}
 	// Normalize and validate the user identity metadata key up front so the
 	// controller fails fast at startup rather than risking failed requests
 	// during reconciliation when an invalid key reaches the gRPC transport.
@@ -182,15 +238,18 @@ func NewController(
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: util.ControllerAgentName})
 
 	controller := &Controller{
-		kubeClient:     client.NewKubeClient(kubeClientSet, recorder),
-		swfClient:      client.NewScheduledWorkflowClient(swfClientSet, swfInformer),
-		runClient:      runClient,
-		workflowClient: client.NewWorkflowClient(workflowClientSet, executionInformer),
+		kubeClient:       client.NewKubeClient(kubeClientSet, recorder),
+		swfClient:        client.NewScheduledWorkflowClient(swfClientSet, swfInformer),
+		runClient:        runClient,
+		experimentClient: experimentClient,
+		pipelineClient:   pipelineClient,
+		workflowClient:   client.NewWorkflowClient(workflowClientSet, executionInformer),
 		workqueue: workqueue.NewNamedRateLimitingQueue(
 			workqueue.NewItemExponentialFailureRateLimiter(DefaultJobBackOff, MaxJobBackOff), swfregister.Kind),
 		time:               time,
 		location:           location,
 		tokenSrc:           tokenSrc,
+		multiUserMode:      multiUserMode,
 		userIdentityHeader: userIdentityHeader,
 		userIdentityValue:  userIdentityValue,
 	}
@@ -534,8 +593,8 @@ func (c *Controller) syncHandler(ctx context.Context, key string) (
 	submitted, nextScheduledEpoch, err := c.submitNextWorkflowIfNeeded(ctx, swf, len(active), nowEpoch)
 	if err != nil {
 		processNextItemOperationDuration.WithLabelValues("swfsubmit", "error").Observe(time.Since(startTime).Seconds())
-		return false, true, swf,
-			wraperror.Wrapf(err, "Syncing ScheduledWorkflow (%v): transient failure, can't fetch completed workflows: %v", name, err)
+		return false, !isPermanentSubmissionError(err), swf,
+			wraperror.Wrapf(err, "Syncing ScheduledWorkflow (%v): failed to submit the next workflow: %v", name, err)
 	} else {
 		processNextItemOperationDuration.WithLabelValues("swfsubmit", "ok").Observe(time.Since(startTime).Seconds())
 	}
@@ -585,10 +644,10 @@ func (c *Controller) submitNextWorkflowIfNeeded(ctx context.Context, swf *util.S
 	if err != nil {
 		log.WithFields(log.Fields{
 			ScheduledWorkflow: swf.Name,
-		}).Errorf("Submitting workflow for ScheduledWorkflow (%v): transient error while submitting workflow: %v",
+		}).Errorf("Submitting workflow for ScheduledWorkflow (%v): error while submitting workflow: %v",
 			swf.Name, err)
-		// There was an error submitting a new workflow.
-		// We should attempt to handle the schedule again at a later time.
+		// syncHandler classifies invalid tenant references as permanent and API
+		// failures as retryable.
 		return false, nextScheduledEpoch, err
 	}
 	log.WithFields(log.Fields{
@@ -652,9 +711,95 @@ func (c *Controller) submitNewWorkflowIfNotAlreadySubmitted(
 		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer "+token.AccessToken)
 	}
 
-	// Inject user identity header for multi-user mode authorization.
+	// Inject the controller identity for API-server authorization in multi-user mode.
 	if c.userIdentityHeader != "" && c.userIdentityValue != "" {
 		ctx = metadata.AppendToOutgoingContext(ctx, c.userIdentityHeader, c.userIdentityValue)
+	}
+
+	if c.multiUserMode {
+		validationCtx, cancelValidation := context.WithTimeout(ctx, tenantReferenceLookupTimeout)
+		defer cancelValidation()
+
+		// A ScheduledWorkflow can be created directly in a namespace by any user
+		// with edit access (the kubeflow-edit role grants full access to the
+		// scheduledworkflows resource), bypassing the API server's per-user
+		// authorization. Because the run below is created with the controller's
+		// cluster-privileged identity and the API server derives the run's
+		// namespace from the referenced experiment, a tenant could point
+		// ExperimentId at another namespace's experiment and have runs executed
+		// there under that namespace's identities. Enforce that the referenced
+		// experiment belongs to the ScheduledWorkflow's own namespace before
+		// creating the run.
+		if swf.Spec.ExperimentId == "" {
+			return false, "", permanentSubmissionErrorf(
+				"scheduled workflow (%s/%s) must reference an experiment in multi-user mode",
+				swf.Namespace, swf.Name)
+		}
+		if c.experimentClient == nil {
+			return false, "", permanentSubmissionErrorf(
+				"cannot validate experiment %s for scheduled workflow (%s/%s): experiment client is not configured",
+				swf.Spec.ExperimentId, swf.Namespace, swf.Name)
+		}
+		experiment, err := c.experimentClient.GetExperiment(validationCtx, &api.GetExperimentRequest{
+			ExperimentId: swf.Spec.ExperimentId,
+		})
+		if err != nil {
+			return false, "", tenantLookupError(err,
+				"failed to resolve experiment %s for scheduled workflow (%s/%s)",
+				swf.Spec.ExperimentId, swf.Namespace, swf.Name)
+		}
+		if experiment.GetNamespace() == "" {
+			return false, "", permanentSubmissionErrorf(
+				"scheduled workflow (%s/%s) references experiment %s with an empty namespace while multi-user validation is enabled; verify that the controller's MULTI_USER_MODE and legacy USER_IDENTITY_HEADER/USER_IDENTITY_VALUE settings match the API server mode, and remove legacy identity settings from single-user deployments",
+				swf.Namespace, swf.Name, swf.Spec.ExperimentId)
+		}
+		if experiment.GetNamespace() != swf.Namespace {
+			return false, "", permanentSubmissionErrorf(
+				"scheduled workflow (%s/%s) references experiment %s that belongs to namespace %q, which does not match the scheduled workflow namespace; refusing to create a cross-namespace run",
+				swf.Namespace, swf.Name, swf.Spec.ExperimentId, experiment.GetNamespace())
+		}
+
+		if c.pipelineClient == nil {
+			return false, "", permanentSubmissionErrorf(
+				"cannot validate pipeline for scheduled workflow (%s/%s): pipeline client is not configured",
+				swf.Namespace, swf.Name)
+		}
+		pipelineID := swf.Spec.PipelineId
+		if swf.Spec.PipelineVersionId != "" {
+			pipelineVersion, err := c.pipelineClient.GetPipelineVersion(validationCtx, &api.GetPipelineVersionRequest{
+				PipelineId:        pipelineID,
+				PipelineVersionId: swf.Spec.PipelineVersionId,
+			})
+			if err != nil {
+				return false, "", tenantLookupError(err,
+					"failed to resolve pipeline version %s for scheduled workflow (%s/%s)",
+					swf.Spec.PipelineVersionId, swf.Namespace, swf.Name)
+			}
+			if pipelineID != "" && pipelineVersion.GetPipelineId() != pipelineID {
+				return false, "", permanentSubmissionErrorf(
+					"scheduled workflow (%s/%s) references pipeline version %s that belongs to pipeline %s, not pipeline %s",
+					swf.Namespace, swf.Name, swf.Spec.PipelineVersionId, pipelineVersion.GetPipelineId(), pipelineID)
+			}
+			pipelineID = pipelineVersion.GetPipelineId()
+		}
+		if pipelineID == "" {
+			return false, "", permanentSubmissionErrorf(
+				"scheduled workflow (%s/%s) must reference a pipeline in multi-user mode",
+				swf.Namespace, swf.Name)
+		}
+		pipeline, err := c.pipelineClient.GetPipeline(validationCtx, &api.GetPipelineRequest{PipelineId: pipelineID})
+		if err != nil {
+			return false, "", tenantLookupError(err,
+				"failed to resolve pipeline %s for scheduled workflow (%s/%s)",
+				pipelineID, swf.Namespace, swf.Name)
+		}
+		// Empty namespace denotes a deliberately shared pipeline. Private pipelines
+		// must belong to the ScheduledWorkflow namespace.
+		if pipeline.GetNamespace() != "" && pipeline.GetNamespace() != swf.Namespace {
+			return false, "", permanentSubmissionErrorf(
+				"scheduled workflow (%s/%s) references pipeline %s that belongs to namespace %q, which does not match the scheduled workflow namespace",
+				swf.Namespace, swf.Name, pipelineID, pipeline.GetNamespace())
+		}
 	}
 
 	var runtimeConfig *api.RuntimeConfig

@@ -22,6 +22,16 @@ rules:
   verbs:
   - create
 - apiGroups:
+  - pipelines.kubeflow.org
+  # The API server authorizes both GetPipeline and GetPipelineVersion against
+  # the parent pipelines resource: canAccessPipelineVersion delegates to
+  # canAccessPipeline, which sets Resource to "pipelines".
+  resources:
+  - experiments
+  - pipelines
+  verbs:
+  - get
+- apiGroups:
   - kubeflow.org
   resources:
   - scheduledworkflows
