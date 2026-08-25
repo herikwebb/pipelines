@@ -519,6 +519,47 @@ describe('UIServer apis', () => {
     });
   });
 
+  describe('/k8s/pod/logs streamed from the API server', () => {
+    let kfpApiServer: Server;
+
+    afterEach(async () => {
+      if (kfpApiServer) {
+        await new Promise<void>((resolve) => kfpApiServer.close(() => resolve()));
+      }
+    });
+
+    it('forces HTML log responses to download without MIME sniffing', async () => {
+      kfpApiServer = express()
+        .all('/*', (_, res) => {
+          res
+            .status(200)
+            .type('text/html')
+            .set('Content-Disposition', 'inline')
+            .send('<script>window.top.pwned = true</script>');
+        })
+        .listen(0);
+      await waitForListening(kfpApiServer);
+      const address = kfpApiServer.address();
+      if (!address || typeof address === 'string') {
+        throw new Error('Expected mock API server to bind to a TCP port');
+      }
+      app = new UIServer(
+        loadConfigs(argv, {
+          ML_PIPELINE_SERVICE_HOST: 'localhost',
+          ML_PIPELINE_SERVICE_PORT: `${address.port}`,
+          STREAM_LOGS_FROM_SERVER_API: 'true',
+        }),
+      );
+
+      const response = await requests(app.app)
+        .get('/k8s/pod/logs?runid=test-run&podname=test-pod')
+        .expect(200);
+
+      expect(response.headers['content-disposition']).toBe('attachment');
+      expect(response.headers['x-content-type-options']).toBe('nosniff');
+    });
+  });
+
   describe('/k8s/pod/logs with authorization enabled', () => {
     let authServer: Server;
     const authPort = 3004;

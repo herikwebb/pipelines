@@ -39,12 +39,19 @@ describe('/artifacts/get namespaced proxy', () => {
   }
 
   let artifactServerInUserNamespace: Server;
-  async function setUpNamespacedArtifactService({ namespace = 'any-ns' }: { namespace?: string }) {
+  async function setUpNamespacedArtifactService({
+    namespace = 'any-ns',
+    responseHeaders = {},
+  }: {
+    namespace?: string;
+    responseHeaders?: Record<string, string>;
+  }) {
     const receivedUrls: string[] = [];
     const artifactService = express();
     const response = `artifact service in ${namespace}`;
     artifactService.use((req, res) => {
       receivedUrls.push(req.url);
+      res.set(responseHeaders);
       res.status(200).send(response);
     });
     artifactServerInUserNamespace = await new Promise<Server>((resolve, reject) => {
@@ -110,6 +117,98 @@ describe('/artifacts/get namespaced proxy', () => {
     );
   });
 
+  it('overrides unsafe response headers from the namespaced artifact service', async () => {
+    await setUpNamespacedArtifactService({
+      namespace: 'ns2',
+      responseHeaders: {
+        'Content-Disposition': 'inline',
+        'Content-Type': 'text/html',
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Origin': '*',
+        'Set-Cookie': 'session=tenant-controlled; Path=/',
+        'X-Content-Type-Options': 'unsafe-value',
+      },
+    });
+    const configs = loadConfigs(argv, {
+      ARTIFACTS_SERVICE_PROXY_ENABLED: 'true',
+    });
+    app = new UIServer(configs);
+
+    const response = await requests(app.app)
+      .get(
+        `/artifacts/get${buildQuery({
+          ...commonParams,
+          namespace: 'ns2',
+        })}`,
+      )
+      .expect(200);
+
+    expect(response.headers['content-type']).toMatch(/^text\/html/);
+    expect(response.headers['content-disposition']).toBe('attachment');
+    expect(response.headers['x-content-type-options']).toBe('nosniff');
+    expect(response.headers['access-control-allow-credentials']).toBeUndefined();
+    expect(response.headers['access-control-allow-origin']).toBeUndefined();
+    expect(response.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('preserves a safe proxy download filename while forcing attachment', async () => {
+    await setUpNamespacedArtifactService({
+      namespace: 'ns2',
+      responseHeaders: {
+        'Content-Disposition':
+          'attachment; filename="directory.tar.gz"; filename*=UTF-8\'\'directory.tar.gz',
+      },
+    });
+    const configs = loadConfigs(argv, { ARTIFACTS_SERVICE_PROXY_ENABLED: 'true' });
+    app = new UIServer(configs);
+
+    const response = await requests(app.app)
+      .get(`/artifacts/get${buildQuery({ ...commonParams, namespace: 'ns2' })}`)
+      .expect(200);
+
+    expect(response.headers['content-disposition']).toBe(
+      'attachment; filename="directory.tar.gz"; filename*=UTF-8\'\'directory.tar.gz',
+    );
+  });
+
+  it('preserves RFC 8187 filenames with a language tag', async () => {
+    await setUpNamespacedArtifactService({
+      namespace: 'ns2',
+      responseHeaders: {
+        'Content-Disposition': "attachment; filename*=UTF-8'en'report%20final.csv",
+      },
+    });
+    const configs = loadConfigs(argv, { ARTIFACTS_SERVICE_PROXY_ENABLED: 'true' });
+    app = new UIServer(configs);
+
+    const response = await requests(app.app)
+      .get(`/artifacts/get${buildQuery({ ...commonParams, namespace: 'ns2' })}`)
+      .expect(200);
+
+    expect(response.headers['content-disposition']).toBe(
+      'attachment; filename="report_final.csv"; filename*=UTF-8\'\'report%20final.csv',
+    );
+  });
+
+  it('preserves RFC 8187 ISO-8859-1 filenames', async () => {
+    await setUpNamespacedArtifactService({
+      namespace: 'ns2',
+      responseHeaders: {
+        'Content-Disposition': "attachment; filename*=ISO-8859-1''caf%E9.txt",
+      },
+    });
+    const configs = loadConfigs(argv, { ARTIFACTS_SERVICE_PROXY_ENABLED: 'true' });
+    app = new UIServer(configs);
+
+    const response = await requests(app.app)
+      .get(`/artifacts/get${buildQuery({ ...commonParams, namespace: 'ns2' })}`)
+      .expect(200);
+
+    expect(response.headers['content-disposition']).toBe(
+      'attachment; filename="caf_.txt"; filename*=UTF-8\'\'caf%C3%A9.txt',
+    );
+  });
+
   it('proxies a download request to namespaced artifact service', async () => {
     const { receivedUrls, getArtifactServiceGetterSpy } = await setUpNamespacedArtifactService({
       namespace: 'ns2',
@@ -136,6 +235,29 @@ describe('/artifacts/get namespaced proxy', () => {
       // url is the same, except namespace query is omitted
       ['/artifacts/minio/ml-pipeline/hello.txt'],
     );
+  });
+
+  it('preserves query-based download mode when proxying dot-segment keys', async () => {
+    const { receivedUrls } = await setUpNamespacedArtifactService({ namespace: 'ns2' });
+    const configs = loadConfigs(argv, {
+      ARTIFACTS_SERVICE_PROXY_ENABLED: 'true',
+    });
+    app = new UIServer(configs);
+
+    await requests(app.app)
+      .get(
+        `/artifacts/get${buildQuery({
+          ...commonParams,
+          key: 'reports/../secret.txt',
+          namespace: 'ns2',
+          download: 'true',
+        })}`,
+      )
+      .expect(200, 'artifact service in ns2');
+
+    expect(receivedUrls).toEqual([
+      '/artifacts/get?source=minio&bucket=ml-pipeline&key=reports%2F..%2Fsecret.txt&download=true',
+    ]);
   });
 
   it('preserves providerInfo when proxying a download request (issue #13717)', async () => {
@@ -191,7 +313,7 @@ describe('/artifacts/get namespaced proxy', () => {
     expect(res.text).not.toContain('stack');
   });
 
-  it.each(['source', 'bucket', 'key', 'providerInfo', 'namespace', 'peek'])(
+  it.each(['source', 'bucket', 'key', 'providerInfo', 'namespace', 'peek', 'download'])(
     'rejects ambiguous %s query parameters before proxying',
     async (parameterName) => {
       const { receivedUrls } = await setUpNamespacedArtifactService({ namespace: 'ns-a' });
@@ -206,6 +328,7 @@ describe('/artifacts/get namespaced proxy', () => {
         providerInfo: '{}',
         namespace: 'ns-a',
         peek: '10',
+        download: 'true',
       });
       query.append(parameterName, 'duplicate');
 

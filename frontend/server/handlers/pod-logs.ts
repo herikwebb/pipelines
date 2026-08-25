@@ -79,6 +79,10 @@ export function getPodLogsHandler(
   );
 
   return async (req, res) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', 'attachment');
+    res.type('text/plain');
+
     if (!req.query.podname) {
       res.status(400).send('podname argument is required');
       return;
@@ -120,7 +124,17 @@ export function getPodLogsHandler(
 
     try {
       const stream = await getPodLogsStream(podName, createdAt, podNamespace);
+      if (res.destroyed || res.writableEnded) {
+        stream.destroy();
+        return;
+      }
       stream.on('error', (err) => {
+        if (res.headersSent) {
+          console.error('[pod-logs] aborting committed response:', err);
+          stream.destroy();
+          res.destroy();
+          return;
+        }
         if (
           err?.message &&
           err.message?.indexOf('Unable to find pod log archive information') > -1
@@ -128,6 +142,11 @@ export function getPodLogsHandler(
           res.status(404).send('pod not found');
         } else {
           res.status(500).send('Could not get main container logs: ' + err);
+        }
+      });
+      res.on('close', () => {
+        if (!res.writableFinished) {
+          stream.destroy();
         }
       });
       stream.on('end', () => res.end());

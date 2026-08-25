@@ -35,9 +35,14 @@ import { getClusterNameHandler, getProjectIdHandler } from './handlers/gke-metad
 import { getAllowCustomVisualizationsHandler } from './handlers/vis.js';
 import { getIndexHTMLHandler } from './handlers/index-html.js';
 
-import { Server } from 'http';
+import { IncomingMessage, Server } from 'http';
 import { HACK_FIX_HPM_PARTIAL_RESPONSE_HEADERS } from './consts.js';
 import registerTensorboardProxy from './handlers/tensorboard-proxy.js';
+
+function hardenPodLogsProxyResponse(proxyRes: IncomingMessage): void {
+  proxyRes.headers['x-content-type-options'] = 'nosniff';
+  proxyRes.headers['content-disposition'] = 'attachment';
+}
 
 function getRegisterHandler(app: Application, basePath: string) {
   return (
@@ -257,6 +262,7 @@ function createUIServer(options: UIConfigs) {
         onProxyReq: (proxyReq) => {
           console.log('Proxied log request: ', proxyReq.path);
         },
+        onProxyRes: hardenPodLogsProxyResponse,
         headers: HACK_FIX_HPM_PARTIAL_RESPONSE_HEADERS,
         pathRewrite: (pathStr: string, req: any) => {
           /** Argo nodeId is just POD name */
@@ -289,6 +295,7 @@ function createUIServer(options: UIConfigs) {
         onProxyReq: (proxyReq) => {
           console.log('Proxied log request: ', proxyReq.path);
         },
+        onProxyRes: hardenPodLogsProxyResponse,
         headers: HACK_FIX_HPM_PARTIAL_RESPONSE_HEADERS,
         pathRewrite: (pathStr: string, req: any) => {
           /** Argo nodeId is just POD name */
