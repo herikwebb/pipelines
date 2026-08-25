@@ -17,8 +17,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"os"
+	"os/exec"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/golang/glog"
 	"github.com/kubeflow/pipelines/backend/src/v2/client_manager"
@@ -127,17 +134,134 @@ func validateLauncherFlags(provided map[string]bool, executorType string) error 
 func main() {
 	err := run()
 	if err != nil {
-		glog.Exit(err)
+		glog.Error(err)
+		glog.Flush()
+		os.Exit(launcherExitCode(err))
 	}
 }
 
-func run() error {
+func launcherExitCode(err error) int {
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		if exitCode := exitError.ExitCode(); exitCode > 0 {
+			return exitCode
+		}
+		if waitStatus, ok := exitError.Sys().(syscall.WaitStatus); ok && waitStatus.Signaled() {
+			return 128 + int(waitStatus.Signal())
+		}
+	}
+	var signalCause interface {
+		Signal() syscall.Signal
+	}
+	if errors.As(err, &signalCause) {
+		return 128 + int(signalCause.Signal())
+	}
+	return 1
+}
+
+type launcherSignalCause struct {
+	signal     syscall.Signal
+	receivedAt time.Time
+}
+
+func (cause launcherSignalCause) Error() string {
+	return fmt.Sprintf("launcher received %s", cause.signal)
+}
+
+func (cause launcherSignalCause) Signal() syscall.Signal {
+	return cause.signal
+}
+
+func (cause launcherSignalCause) ReceivedAt() time.Time {
+	return cause.receivedAt
+}
+
+func preserveSignalCause(ctx context.Context, err error) error {
+	var signalCause interface {
+		Signal() syscall.Signal
+	}
+	cause := context.Cause(ctx)
+	if !errors.As(cause, &signalCause) {
+		return err
+	}
+	if err == nil {
+		return cause
+	}
+	if errors.Is(err, cause) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", err, cause)
+}
+
+func preserveUnhandledSignalCause(ctx context.Context, err error, completionHandlesSignalCause bool) error {
+	if completionHandlesSignalCause {
+		return err
+	}
+	return preserveSignalCause(ctx, err)
+}
+
+func completedBeforeCancellation(ctx context.Context, err error) bool {
+	return err == nil && ctx.Err() == nil
+}
+
+func launcherContextForSignals(
+	parent context.Context,
+	signals <-chan os.Signal,
+	stopNotifications func(),
+) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(parent)
+	stopListening := make(chan struct{})
+	var stopOnce sync.Once
+	go func() {
+		for {
+			select {
+			case receivedSignal, ok := <-signals:
+				if !ok {
+					return
+				}
+				// Keep draining notifications after the first signal so repeated
+				// SIGTERM deliveries cannot interrupt metadata finalization.
+				if ctx.Err() != nil {
+					continue
+				}
+				signalValue, ok := receivedSignal.(syscall.Signal)
+				if !ok {
+					cancel(fmt.Errorf("launcher received unsupported signal %v", receivedSignal))
+					continue
+				}
+				cancel(launcherSignalCause{signal: signalValue, receivedAt: time.Now()})
+			case <-stopListening:
+				return
+			}
+		}
+	}()
+	return ctx, func() {
+		stopOnce.Do(func() {
+			if stopNotifications != nil {
+				stopNotifications()
+			}
+			close(stopListening)
+			cancel(context.Canceled)
+		})
+	}
+}
+
+func run() (err error) {
 	flag.Parse()
 	providedFlags := collectProvidedFlags()
-	ctx := context.Background()
+	terminationSignals := make(chan os.Signal, 1)
+	signal.Notify(terminationSignals, os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := launcherContextForSignals(context.Background(), terminationSignals, func() {
+		signal.Stop(terminationSignals)
+	})
+	defer cancel()
+	completionHandlesSignalCause := false
+	defer func() {
+		err = preserveUnhandledSignalCause(ctx, err, completionHandlesSignalCause)
+	}()
 
 	glog.Infof("Setting log level to: '%s'", *logLevel)
-	err := flag.Set("v", *logLevel)
+	err = flag.Set("v", *logLevel)
 	if err != nil {
 		glog.Warningf("Failed to set log level: %s", err.Error())
 	}
@@ -146,7 +270,9 @@ func run() error {
 		// copy is used to copy this binary to a shared volume
 		// this is a special command, ignore all other flags by returning
 		// early
-		return component.CopyThisBinary(*copy)
+		err := component.CopyThisBinary(*copy)
+		completionHandlesSignalCause = completedBeforeCancellation(ctx, err)
+		return err
 	}
 
 	if err := validateLauncherFlags(providedFlags, *executorType); err != nil {
@@ -185,10 +311,11 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		if err := importerLauncher.Execute(ctx); err != nil {
-			return err
-		}
-		return nil
+		err = importerLauncher.Execute(ctx)
+		// A nil importer result means its metadata publication completed. Keep
+		// the process result aligned even if cancellation raced with its return.
+		completionHandlesSignalCause = err == nil
+		return err
 	case "container":
 		clientOptions := &client_manager.Options{
 			MLPipelineServerAddress: launcherV2Opts.MLPipelineServerAddress,
@@ -208,11 +335,11 @@ func run() error {
 			return err
 		}
 		glog.V(5).Info(launcher.Info())
-		if err := launcher.Execute(ctx); err != nil {
-			return err
-		}
-
-		return nil
+		// LauncherV2.Execute owns the completion cutoff for container tasks so a
+		// signal arriving during detached metadata finalization cannot make the
+		// process result disagree with the state already being published.
+		completionHandlesSignalCause = true
+		return launcher.Execute(ctx)
 
 	}
 	return fmt.Errorf("unsupported executor type %s", *executorType)

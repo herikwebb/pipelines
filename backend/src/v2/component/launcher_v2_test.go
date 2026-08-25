@@ -14,6 +14,7 @@
 package component
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -21,9 +22,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strconv"
+	"syscall"
 	"testing"
+	"time"
 
+	api "github.com/kubeflow/pipelines/backend/api/v1beta1/go_client"
 	"github.com/kubeflow/pipelines/backend/src/v2/cacheutils"
 	"github.com/kubeflow/pipelines/backend/src/v2/client_manager"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -31,9 +39,13 @@ import (
 	"github.com/kubeflow/pipelines/api/v2alpha1/go/pipelinespec"
 	"github.com/kubeflow/pipelines/backend/src/v2/metadata"
 	"github.com/kubeflow/pipelines/backend/src/v2/objectstore"
+	pb "github.com/kubeflow/pipelines/third_party/ml-metadata/go/ml_metadata"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gocloud.dev/blob"
 	_ "gocloud.dev/blob/memblob"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 	k8score "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,6 +65,915 @@ var addNumbersComponent = &pipelinespec.ComponentSpec{
 			"Output": {ParameterType: pipelinespec.ParameterType_NUMBER_INTEGER},
 		},
 	},
+}
+
+type launcherTestSignalCause struct {
+	signal     syscall.Signal
+	receivedAt time.Time
+}
+
+func (cause launcherTestSignalCause) Error() string {
+	return cause.signal.String()
+}
+
+func (cause launcherTestSignalCause) Signal() syscall.Signal {
+	return cause.signal
+}
+
+func (cause launcherTestSignalCause) ReceivedAt() time.Time {
+	return cause.receivedAt
+}
+
+type launcherFinalizationMetadataClient struct {
+	*metadata.FakeClient
+	execution               *metadata.Execution
+	cancelExecution         context.CancelCauseFunc
+	cancellationCause       error
+	finalizationContexts    []launcherFinalizationContextObservation
+	publishedExecutionState pb.Execution_State
+	publishedParameters     map[string]*structpb.Value
+	publishedArtifacts      []*metadata.OutputArtifact
+	getDAGErr               error
+	updateDAGCalls          int
+	cancelOnPrePublish      bool
+	cancelOnPublish         bool
+	blockPublishUntilCancel bool
+	publishError            error
+}
+
+type launcherFinalizationContextObservation struct {
+	err         error
+	hasDeadline bool
+}
+
+type launcherCancellationCacheClient struct {
+	cacheutils.Client
+	cancel context.CancelCauseFunc
+	cause  error
+	calls  int
+}
+
+func (client *launcherCancellationCacheClient) CreateExecutionCache(ctx context.Context, _ *api.Task) error {
+	client.calls++
+	client.cancel(client.cause)
+	return ctx.Err()
+}
+
+func (client *launcherFinalizationMetadataClient) GetExecution(context.Context, int64) (*metadata.Execution, error) {
+	return client.execution, nil
+}
+
+func (client *launcherFinalizationMetadataClient) PrePublishExecution(
+	context.Context,
+	*metadata.Execution,
+	*metadata.ExecutionConfig,
+) (*metadata.Execution, error) {
+	if client.cancelOnPrePublish {
+		client.cancelExecution(client.cancellationCause)
+	}
+	return client.execution, nil
+}
+
+func (client *launcherFinalizationMetadataClient) observeFinalizationContext(ctx context.Context) {
+	_, hasDeadline := ctx.Deadline()
+	client.finalizationContexts = append(client.finalizationContexts, launcherFinalizationContextObservation{
+		err:         ctx.Err(),
+		hasDeadline: hasDeadline,
+	})
+}
+
+func (client *launcherFinalizationMetadataClient) PublishExecution(
+	ctx context.Context,
+	_ *metadata.Execution,
+	parameters map[string]*structpb.Value,
+	artifacts []*metadata.OutputArtifact,
+	state pb.Execution_State,
+) error {
+	client.observeFinalizationContext(ctx)
+	client.publishedExecutionState = state
+	client.publishedParameters = parameters
+	client.publishedArtifacts = artifacts
+	if client.cancelOnPublish {
+		client.cancelExecution(client.cancellationCause)
+	}
+	if client.blockPublishUntilCancel {
+		<-ctx.Done()
+		if client.publishError != nil {
+			return client.publishError
+		}
+		return ctx.Err()
+	}
+	return nil
+}
+
+func (client *launcherFinalizationMetadataClient) GetDAG(ctx context.Context, _ int64) (*metadata.DAG, error) {
+	client.observeFinalizationContext(ctx)
+	if client.getDAGErr != nil {
+		return nil, client.getDAGErr
+	}
+	return &metadata.DAG{}, nil
+}
+
+func (client *launcherFinalizationMetadataClient) GetPipelineFromExecution(ctx context.Context, _ int64) (*metadata.Pipeline, error) {
+	client.observeFinalizationContext(ctx)
+	return &metadata.Pipeline{}, nil
+}
+
+func (client *launcherFinalizationMetadataClient) UpdateDAGExecutionsState(
+	ctx context.Context,
+	_ *metadata.DAG,
+	_ *metadata.Pipeline,
+) error {
+	client.observeFinalizationContext(ctx)
+	client.updateDAGCalls++
+	return nil
+}
+
+func writeLauncherTestHelperFile(path string, contents []byte) {
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "launcher test helper failed to write %s: %v\n", path, err)
+		os.Exit(1)
+	}
+}
+
+func TestLauncherCommandHelperProcess(t *testing.T) {
+	mode := os.Getenv("KFP_LAUNCHER_TEST_HELPER_MODE")
+	if mode == "" {
+		return
+	}
+	if os.Getenv("KFP_LAUNCHER_TEST_ESCAPE_PROCESS_GROUP") == "true" {
+		if _, err := syscall.Setsid(); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "launcher test helper failed to create a session: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	terminationSignals := make(chan os.Signal, 1)
+	signal.Notify(terminationSignals, syscall.SIGINT, syscall.SIGTERM)
+
+	pidFile := os.Getenv("KFP_LAUNCHER_TEST_PID_FILE")
+	if pidFile != "" {
+		writeLauncherTestHelperFile(pidFile, []byte(strconv.Itoa(os.Getpid())))
+	}
+	readyFile := os.Getenv("KFP_LAUNCHER_TEST_READY_FILE")
+	writeLauncherTestHelperFile(readyFile, []byte("ready"))
+	receivedSignal := <-terminationSignals
+	signal.Stop(terminationSignals)
+
+	terminatedFile := os.Getenv("KFP_LAUNCHER_TEST_TERMINATED_FILE")
+	writeLauncherTestHelperFile(terminatedFile, []byte(receivedSignal.String()))
+	if mode == "exit" {
+		os.Exit(42)
+	}
+	if mode == "exit-zero" {
+		return
+	}
+
+	for {
+		time.Sleep(time.Hour)
+	}
+}
+
+func launcherTestHelperCommand(
+	ctx context.Context,
+	terminationGracePeriod time.Duration,
+	mode string,
+	readyFile string,
+	terminatedFile string,
+) *commandWithGracefulCancellation {
+	command := newCommandWithGracefulCancellation(
+		ctx,
+		terminationGracePeriod,
+		os.Args[0],
+		"-test.run=^TestLauncherCommandHelperProcess$",
+	)
+	command.Env = append(
+		os.Environ(),
+		"KFP_LAUNCHER_TEST_HELPER_MODE="+mode,
+		"KFP_LAUNCHER_TEST_READY_FILE="+readyFile,
+		"KFP_LAUNCHER_TEST_TERMINATED_FILE="+terminatedFile,
+	)
+	return command
+}
+
+func launcherTestShellChildCommand(
+	ctx context.Context,
+	terminationGracePeriod time.Duration,
+	readyFile string,
+	terminatedFile string,
+	pidFile string,
+) *commandWithGracefulCancellation {
+	command := newCommandWithGracefulCancellation(
+		ctx,
+		terminationGracePeriod,
+		"sh",
+		"-c",
+		`"$1" -test.run=^TestLauncherCommandHelperProcess$ & wait`,
+		"launcher-test-shell",
+		os.Args[0],
+	)
+	command.Env = append(
+		os.Environ(),
+		"KFP_LAUNCHER_TEST_HELPER_MODE=wait",
+		"KFP_LAUNCHER_TEST_READY_FILE="+readyFile,
+		"KFP_LAUNCHER_TEST_TERMINATED_FILE="+terminatedFile,
+		"KFP_LAUNCHER_TEST_PID_FILE="+pidFile,
+	)
+	return command
+}
+
+func launcherTestEscapedChildCommand(
+	ctx context.Context,
+	terminationGracePeriod time.Duration,
+	readyFile string,
+	terminatedFile string,
+	pidFile string,
+) *commandWithGracefulCancellation {
+	command := newCommandWithGracefulCancellation(
+		ctx,
+		terminationGracePeriod,
+		"sh",
+		"-c",
+		`"$1" -test.run=^TestLauncherCommandHelperProcess$ & wait`,
+		"launcher-test-shell",
+		os.Args[0],
+	)
+	command.Env = append(
+		os.Environ(),
+		"KFP_LAUNCHER_TEST_HELPER_MODE=wait",
+		"KFP_LAUNCHER_TEST_READY_FILE="+readyFile,
+		"KFP_LAUNCHER_TEST_TERMINATED_FILE="+terminatedFile,
+		"KFP_LAUNCHER_TEST_PID_FILE="+pidFile,
+		"KFP_LAUNCHER_TEST_ESCAPE_PROCESS_GROUP=true",
+	)
+	output := &bytes.Buffer{}
+	command.Stdout = output
+	command.Stderr = output
+	return command
+}
+
+func cleanupLauncherTestCommand(command *commandWithGracefulCancellation) func() {
+	return func() {
+		if command.Process != nil {
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		}
+	}
+}
+
+func requireLinuxProcessGroups(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("launcher process-group behavior is Linux-specific")
+	}
+}
+
+func TestNewCommandWithGracefulCancellation_ForwardsSIGTERMAndPreservesExitStatus(t *testing.T) {
+	requireLinuxProcessGroups(t)
+	tempDir := t.TempDir()
+	readyFile := filepath.Join(tempDir, "ready")
+	terminatedFile := filepath.Join(tempDir, "terminated")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	command := launcherTestHelperCommand(ctx, 5*time.Second, "exit", readyFile, terminatedFile)
+	t.Cleanup(cleanupLauncherTestCommand(command))
+	result := make(chan error, 1)
+	go func() {
+		result <- command.Run()
+	}()
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(readyFile)
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	cancel()
+
+	var err error
+	select {
+	case err = <-result:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the user command to exit after SIGTERM")
+	}
+	var exitError *exec.ExitError
+	require.ErrorAs(t, err, &exitError)
+	assert.Equal(t, 42, exitError.ExitCode())
+	_, err = os.Stat(terminatedFile)
+	assert.NoError(t, err, "the user command did not observe SIGTERM")
+}
+
+func TestNewCommandWithGracefulCancellation_ReturnsCancellationAfterGracefulZeroExit(t *testing.T) {
+	requireLinuxProcessGroups(t)
+	tempDir := t.TempDir()
+	readyFile := filepath.Join(tempDir, "ready")
+	terminatedFile := filepath.Join(tempDir, "terminated")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	command := launcherTestHelperCommand(ctx, 5*time.Second, "exit-zero", readyFile, terminatedFile)
+	t.Cleanup(cleanupLauncherTestCommand(command))
+	result := make(chan error, 1)
+	go func() {
+		result <- command.Run()
+	}()
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(readyFile)
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-result:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the user command to exit successfully after SIGTERM")
+	}
+	_, err := os.Stat(terminatedFile)
+	assert.NoError(t, err, "the user command did not observe SIGTERM")
+}
+
+func TestNewCommandWithGracefulCancellation_ForwardsSIGINT(t *testing.T) {
+	requireLinuxProcessGroups(t)
+	tempDir := t.TempDir()
+	readyFile := filepath.Join(tempDir, "ready")
+	terminatedFile := filepath.Join(tempDir, "terminated")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	command := launcherTestHelperCommand(ctx, 5*time.Second, "exit-zero", readyFile, terminatedFile)
+	t.Cleanup(cleanupLauncherTestCommand(command))
+	result := make(chan error, 1)
+	go func() {
+		result <- command.Run()
+	}()
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(readyFile)
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	cancel(launcherTestSignalCause{signal: syscall.SIGINT, receivedAt: time.Now()})
+
+	select {
+	case err := <-result:
+		var signalCause launcherTestSignalCause
+		require.ErrorAs(t, err, &signalCause)
+		assert.Equal(t, syscall.SIGINT, signalCause.Signal())
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the user command to exit after SIGINT")
+	}
+	receivedSignal, err := os.ReadFile(terminatedFile)
+	require.NoError(t, err)
+	assert.Equal(t, syscall.SIGINT.String(), string(receivedSignal))
+}
+
+func TestNewCommandWithGracefulCancellation_PreservesSignalBeforeStart(t *testing.T) {
+	requireLinuxProcessGroups(t)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	signalCause := launcherTestSignalCause{signal: syscall.SIGTERM, receivedAt: time.Now()}
+	cancel(signalCause)
+	command := newCommandWithGracefulCancellation(ctx, time.Second, "sh", "-c", "exit 0")
+
+	err := command.Run()
+
+	var actualCause launcherTestSignalCause
+	require.ErrorAs(t, err, &actualCause)
+	assert.Equal(t, signalCause, actualCause)
+	assert.Nil(t, command.Process)
+}
+
+func TestWaitForCommandExit_TimesOut(t *testing.T) {
+	waitResult := make(chan error)
+
+	timedOut, err := waitForCommandExit(waitResult, 20*time.Millisecond)
+
+	assert.NoError(t, err)
+	assert.True(t, timedOut)
+}
+
+func TestCancellationSignalDefaultsToSIGTERM(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(errors.New("non-signal cancellation"))
+
+	assert.Equal(t, syscall.SIGTERM, cancellationSignal(ctx))
+}
+
+func TestShouldSkipOutputUploadsOnlyWhileCommandWaitIsIncomplete(t *testing.T) {
+	assert.True(t, shouldSkipOutputUploads(fmt.Errorf("wrapped: %w", errUserCommandWaitIncomplete)))
+	assert.False(t, shouldSkipOutputUploads(errUserCommandCleanupIncomplete))
+	assert.False(t, shouldSkipOutputUploads(errors.New("component failed")))
+}
+
+func TestProcessGroupRunningWithProcDistinguishesZombies(t *testing.T) {
+	procRoot := t.TempDir()
+	processDir := filepath.Join(procRoot, "123")
+	require.NoError(t, os.Mkdir(processDir, 0o700))
+	statPath := filepath.Join(processDir, "stat")
+	require.NoError(t, os.WriteFile(statPath, []byte("123 (worker) Z 1 42 0"), 0o600))
+	groupExists := func(int) bool { return true }
+
+	assert.False(t, processGroupRunningWithProc(42, procRoot, groupExists))
+	require.NoError(t, os.WriteFile(statPath, []byte("123 (worker) S 1 42 0"), 0o600))
+	assert.True(t, processGroupRunningWithProc(42, procRoot, groupExists))
+}
+
+func TestProcessGroupRunningWithProcFallsBackToKernelProbe(t *testing.T) {
+	missingProcRoot := filepath.Join(t.TempDir(), "missing")
+
+	assert.True(t, processGroupRunningWithProc(42, missingProcRoot, func(int) bool { return true }))
+	assert.False(t, processGroupRunningWithProc(42, missingProcRoot, func(int) bool { return false }))
+}
+
+func TestNewCommandWithGracefulCancellation_ForceKillsAfterGracePeriod(t *testing.T) {
+	requireLinuxProcessGroups(t)
+	tempDir := t.TempDir()
+	readyFile := filepath.Join(tempDir, "ready")
+	terminatedFile := filepath.Join(tempDir, "terminated")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	terminationGracePeriod := 500 * time.Millisecond
+	command := launcherTestHelperCommand(ctx, terminationGracePeriod, "wait", readyFile, terminatedFile)
+	t.Cleanup(cleanupLauncherTestCommand(command))
+	result := make(chan error, 1)
+	go func() {
+		result <- command.Run()
+	}()
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(readyFile)
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	startedCancellation := time.Now()
+	cancel()
+
+	var err error
+	select {
+	case err = <-result:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the user command to be force-killed")
+	}
+	assert.Error(t, err)
+	assert.Less(t, time.Since(startedCancellation), 5*time.Second)
+	_, err = os.Stat(terminatedFile)
+	assert.NoError(t, err, "the user command did not observe SIGTERM before it was killed")
+}
+
+func TestNewCommandWithGracefulCancellation_TerminatesShellSpawnedProcessGroup(t *testing.T) {
+	requireLinuxProcessGroups(t)
+	tempDir := t.TempDir()
+	readyFile := filepath.Join(tempDir, "ready")
+	terminatedFile := filepath.Join(tempDir, "terminated")
+	pidFile := filepath.Join(tempDir, "pid")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	terminationGracePeriod := 500 * time.Millisecond
+	command := launcherTestShellChildCommand(ctx, terminationGracePeriod, readyFile, terminatedFile, pidFile)
+	t.Cleanup(cleanupLauncherTestCommand(command))
+	result := make(chan error, 1)
+	go func() {
+		result <- command.Run()
+	}()
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(readyFile)
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	startedCancellation := time.Now()
+	cancel()
+
+	var err error
+	select {
+	case err = <-result:
+		assert.Error(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the user command process group to be force-killed")
+	}
+	assert.GreaterOrEqual(t, time.Since(startedCancellation), terminationGracePeriod)
+	assert.Less(t, time.Since(startedCancellation), 5*time.Second)
+	_, err = os.Stat(terminatedFile)
+	assert.NoError(t, err, "the child process did not observe SIGTERM before it was killed")
+	require.Eventually(t, func() bool {
+		return !processGroupRunning(command.Process.Pid)
+	}, time.Second, 10*time.Millisecond, "Run returned while the process group still had running members")
+}
+
+func TestNewCommandWithGracefulCancellation_BoundsWaitForEscapedDescendant(t *testing.T) {
+	requireLinuxProcessGroups(t)
+	tempDir := t.TempDir()
+	readyFile := filepath.Join(tempDir, "ready")
+	terminatedFile := filepath.Join(tempDir, "terminated")
+	pidFile := filepath.Join(tempDir, "pid")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	command := launcherTestEscapedChildCommand(ctx, 100*time.Millisecond, readyFile, terminatedFile, pidFile)
+	escapedChildPID := 0
+	t.Cleanup(func() {
+		if escapedChildPID != 0 {
+			_ = syscall.Kill(escapedChildPID, syscall.SIGKILL)
+		}
+	})
+	result := make(chan error, 1)
+	go func() {
+		result <- command.Run()
+	}()
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(readyFile)
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	pidBytes, err := os.ReadFile(pidFile)
+	require.NoError(t, err)
+	escapedChildPID, err = strconv.Atoi(string(pidBytes))
+	require.NoError(t, err)
+	startedCancellation := time.Now()
+	cancel()
+
+	select {
+	case err = <-result:
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "process group exited")
+		assert.ErrorIs(t, err, errUserCommandCleanupIncomplete)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the command with an escaped descendant")
+	}
+	assert.Less(t, time.Since(startedCancellation), 4*time.Second)
+	_, err = os.Stat(terminatedFile)
+	assert.ErrorIs(t, err, os.ErrNotExist, "the escaped child unexpectedly received the process-group signal")
+}
+
+func TestLauncherV2Execute_UsesBoundedFinalizationContextAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	signalCause := launcherTestSignalCause{signal: syscall.SIGTERM, receivedAt: time.Now()}
+	execution := metadata.NewExecution(&pb.Execution{
+		CustomProperties: map[string]*pb.Value{
+			"parent_dag_id": {Value: &pb.Value_IntValue{IntValue: 7}},
+		},
+	})
+	metadataClient := &launcherFinalizationMetadataClient{
+		FakeClient:         metadata.NewFakeClient(),
+		execution:          execution,
+		cancelExecution:    cancel,
+		cancellationCause:  signalCause,
+		cancelOnPrePublish: true,
+		getDAGErr:          errors.New("DAG lookup failed"),
+	}
+	launcher := &LauncherV2{
+		executionID:   1,
+		executorInput: &pipelinespec.ExecutorInput{},
+		clientManager: client_manager.NewFakeClientManager(nil, metadataClient, nil),
+	}
+
+	err := launcher.Execute(ctx)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, signalCause)
+	assert.ErrorIs(t, ctx.Err(), context.Canceled)
+	assert.Equal(t, pb.Execution_FAILED, metadataClient.publishedExecutionState)
+	assert.Zero(t, metadataClient.updateDAGCalls)
+	require.NotEmpty(t, metadataClient.finalizationContexts)
+	for _, finalizationCtx := range metadataClient.finalizationContexts {
+		assert.NoError(t, finalizationCtx.err)
+		assert.True(t, finalizationCtx.hasDeadline, "finalization context must be bounded")
+	}
+}
+
+func TestLauncherV2Execute_CommitsCompletionAfterSuccessfulPublish(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	signalCause := launcherTestSignalCause{signal: syscall.SIGTERM, receivedAt: time.Now()}
+	execution := metadata.NewExecution(&pb.Execution{
+		CustomProperties: map[string]*pb.Value{
+			"parent_dag_id": {Value: &pb.Value_IntValue{IntValue: 7}},
+		},
+	})
+	metadataClient := &launcherFinalizationMetadataClient{
+		FakeClient:        metadata.NewFakeClient(),
+		execution:         execution,
+		cancelExecution:   cancel,
+		cancellationCause: signalCause,
+		cancelOnPublish:   true,
+		getDAGErr:         errors.New("DAG lookup failed"),
+	}
+	launcher := &LauncherV2{
+		executionID:   1,
+		executorInput: &pipelinespec.ExecutorInput{},
+		clientManager: client_manager.NewFakeClientManager(nil, metadataClient, nil),
+		componentExecutor: func(
+			context.Context,
+			*metadata.Execution,
+		) (*pipelinespec.ExecutorOutput, []*metadata.OutputArtifact, error) {
+			return nil, nil, nil
+		},
+	}
+
+	err := launcher.Execute(ctx)
+
+	require.NoError(t, err)
+	assert.ErrorIs(t, context.Cause(ctx), signalCause)
+	assert.Equal(t, pb.Execution_COMPLETE, metadataClient.publishedExecutionState)
+}
+
+func TestLauncherV2Execute_CommitsPersistedOutputsWhenSignalRacesComponentReturn(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	signalCause := launcherTestSignalCause{signal: syscall.SIGTERM, receivedAt: time.Now()}
+	execution := metadata.NewExecution(&pb.Execution{
+		CustomProperties: map[string]*pb.Value{
+			"parent_dag_id": {Value: &pb.Value_IntValue{IntValue: 7}},
+		},
+	})
+	metadataClient := &launcherFinalizationMetadataClient{
+		FakeClient: metadata.NewFakeClient(),
+		execution:  execution,
+		getDAGErr:  errors.New("DAG lookup failed"),
+	}
+	launcher := &LauncherV2{
+		executionID:   1,
+		executorInput: &pipelinespec.ExecutorInput{},
+		clientManager: client_manager.NewFakeClientManager(nil, metadataClient, nil),
+		componentExecutor: func(
+			context.Context,
+			*metadata.Execution,
+		) (*pipelinespec.ExecutorOutput, []*metadata.OutputArtifact, error) {
+			cancel(signalCause)
+			return nil, nil, nil
+		},
+	}
+
+	err := launcher.Execute(ctx)
+
+	require.NoError(t, err)
+	assert.ErrorIs(t, context.Cause(ctx), signalCause)
+	assert.Equal(t, pb.Execution_COMPLETE, metadataClient.publishedExecutionState)
+}
+
+func TestLauncherV2Execute_CommitsCompletionWhenSignalInterruptsCacheWrite(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	signalCause := launcherTestSignalCause{signal: syscall.SIGTERM, receivedAt: time.Now()}
+	executionID := int64(1)
+	execution := metadata.NewExecution(&pb.Execution{
+		Id: &executionID,
+		CustomProperties: map[string]*pb.Value{
+			"parent_dag_id":     {Value: &pb.Value_IntValue{IntValue: 7}},
+			"cache_fingerprint": {Value: &pb.Value_StringValue{StringValue: "fingerprint"}},
+		},
+	})
+	metadataClient := &launcherFinalizationMetadataClient{
+		FakeClient: metadata.NewFakeClient(),
+		execution:  execution,
+		getDAGErr:  errors.New("DAG lookup failed"),
+	}
+	cacheClient := &launcherCancellationCacheClient{
+		cancel: cancel,
+		cause:  signalCause,
+	}
+	launcher := &LauncherV2{
+		executionID:   1,
+		executorInput: &pipelinespec.ExecutorInput{},
+		clientManager: client_manager.NewFakeClientManager(nil, metadataClient, cacheClient),
+		componentExecutor: func(
+			context.Context,
+			*metadata.Execution,
+		) (*pipelinespec.ExecutorOutput, []*metadata.OutputArtifact, error) {
+			return nil, nil, nil
+		},
+	}
+
+	err := launcher.Execute(ctx)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, cacheClient.calls)
+	assert.ErrorIs(t, context.Cause(ctx), signalCause)
+	assert.Equal(t, pb.Execution_COMPLETE, metadataClient.publishedExecutionState)
+}
+
+func TestLauncherV2Execute_FailsWhenPublishMissesShutdownDeadline(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	signalCause := launcherTestSignalCause{
+		signal:     syscall.SIGTERM,
+		receivedAt: time.Now().Add(-launcherShutdownTimeout),
+	}
+	execution := metadata.NewExecution(&pb.Execution{
+		CustomProperties: map[string]*pb.Value{
+			"parent_dag_id": {Value: &pb.Value_IntValue{IntValue: 7}},
+		},
+	})
+	metadataClient := &launcherFinalizationMetadataClient{
+		FakeClient:              metadata.NewFakeClient(),
+		execution:               execution,
+		cancelExecution:         cancel,
+		cancellationCause:       signalCause,
+		cancelOnPublish:         true,
+		blockPublishUntilCancel: true,
+		publishError:            grpcstatus.Error(codes.DeadlineExceeded, "metadata publication deadline expired"),
+		getDAGErr:               context.DeadlineExceeded,
+	}
+	launcher := &LauncherV2{
+		executionID:   1,
+		executorInput: &pipelinespec.ExecutorInput{},
+		clientManager: client_manager.NewFakeClientManager(nil, metadataClient, nil),
+		componentExecutor: func(
+			context.Context,
+			*metadata.Execution,
+		) (*pipelinespec.ExecutorOutput, []*metadata.OutputArtifact, error) {
+			return nil, nil, nil
+		},
+	}
+
+	started := time.Now()
+	err := launcher.Execute(ctx)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, signalCause)
+	assert.ErrorContains(t, err, codes.DeadlineExceeded.String())
+	assert.ErrorIs(t, context.Cause(ctx), signalCause)
+	assert.Equal(t, pb.Execution_COMPLETE, metadataClient.publishedExecutionState)
+	assert.Less(t, time.Since(started), 5*time.Second)
+}
+
+func TestLauncherV2Execute_PublishesPartialOutputsAfterComponentFailure(t *testing.T) {
+	componentErr := errors.New("component failed")
+	execution := metadata.NewExecution(&pb.Execution{
+		CustomProperties: map[string]*pb.Value{
+			"parent_dag_id": {Value: &pb.Value_IntValue{IntValue: 7}},
+		},
+	})
+	metadataClient := &launcherFinalizationMetadataClient{
+		FakeClient: metadata.NewFakeClient(),
+		execution:  execution,
+		getDAGErr:  errors.New("DAG lookup failed"),
+	}
+	executorOutput := &pipelinespec.ExecutorOutput{
+		ParameterValues: map[string]*structpb.Value{
+			"partial": structpb.NewStringValue("available"),
+		},
+	}
+	outputArtifact := &metadata.OutputArtifact{Name: "executor-logs"}
+	launcher := &LauncherV2{
+		executionID:   1,
+		executorInput: &pipelinespec.ExecutorInput{},
+		clientManager: client_manager.NewFakeClientManager(nil, metadataClient, nil),
+		componentExecutor: func(
+			context.Context,
+			*metadata.Execution,
+		) (*pipelinespec.ExecutorOutput, []*metadata.OutputArtifact, error) {
+			return executorOutput, []*metadata.OutputArtifact{outputArtifact}, componentErr
+		},
+	}
+
+	err := launcher.Execute(context.Background())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, componentErr)
+	assert.Equal(t, pb.Execution_FAILED, metadataClient.publishedExecutionState)
+	assert.Equal(t, "available", metadataClient.publishedParameters["partial"].GetStringValue())
+	require.Len(t, metadataClient.publishedArtifacts, 1)
+	assert.Same(t, outputArtifact, metadataClient.publishedArtifacts[0])
+}
+
+func TestNewFinalizationContext_RemainsLiveWhenParentIsCanceled(t *testing.T) {
+	parentCtx, cancelParent := context.WithCancel(context.Background())
+	finalizationCtx, cancelFinalization := newFinalizationContext(parentCtx, 0)
+	defer cancelFinalization()
+	_, hasDeadline := finalizationCtx.Deadline()
+	assert.False(t, hasDeadline, "normal finalization must preserve unbounded artifact uploads")
+
+	cancelParent()
+
+	assert.NoError(t, finalizationCtx.Err())
+}
+
+func TestShutdownBudgetForTerminationGracePeriod(t *testing.T) {
+	budget := shutdownBudgetForTerminationGracePeriod(5 * time.Second)
+
+	assert.Equal(t, 1500*time.Millisecond, budget.userCommandGrace)
+	assert.Equal(t, 4500*time.Millisecond, budget.finalization)
+	assert.Equal(t, 4500*time.Millisecond, budget.shutdown)
+	assert.Equal(t, 5*time.Second, budget.hardShutdown)
+	assert.Equal(t, 1500*time.Millisecond, budget.metadataReserve)
+	assert.Equal(t, time.Second, budget.minimumFinalization)
+	assert.Equal(t, time.Second, budget.commandKillWait)
+
+	zeroBudget := shutdownBudgetForTerminationGracePeriod(0)
+	assert.Zero(t, zeroBudget.shutdown)
+	assert.Zero(t, zeroBudget.hardShutdown)
+	assert.Zero(t, zeroBudget.userCommandGrace)
+
+	longBudget := shutdownBudgetForTerminationGracePeriod(60 * time.Second)
+	assert.Equal(t, 59*time.Second/3, longBudget.userCommandGrace)
+	assert.Greater(t, longBudget.userCommandGrace, userCommandTerminationGracePeriod)
+}
+
+func TestLauncherV2ReadsPodTerminationGracePeriod(t *testing.T) {
+	terminationGracePeriodSeconds := int64(5)
+	pod := &k8score.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "launcher-pod", Namespace: "test-namespace"},
+		Spec: k8score.PodSpec{
+			TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
+		},
+	}
+	launcher := &LauncherV2{
+		options: LauncherV2Options{Namespace: pod.Namespace, PodName: pod.Name},
+		clientManager: client_manager.NewFakeClientManager(
+			fake.NewSimpleClientset(pod),
+			nil,
+			nil,
+		),
+	}
+
+	budget := shutdownBudgetFromContext(launcher.withPodShutdownBudget(context.Background()))
+
+	assert.Equal(t, 4500*time.Millisecond, budget.shutdown)
+	assert.Equal(t, 1500*time.Millisecond, budget.userCommandGrace)
+}
+
+func TestNewFinalizationContext_ArmsShutdownBudgetAfterStart(t *testing.T) {
+	parentCtx, cancelParent := context.WithCancelCause(context.Background())
+	finalizationCtx, cancelFinalization := newFinalizationContext(parentCtx, metadataFinalizationReserve)
+	defer cancelFinalization()
+	cancelParent(launcherTestSignalCause{
+		signal:     syscall.SIGTERM,
+		receivedAt: time.Now().Add(-launcherShutdownTimeout),
+	})
+
+	require.Eventually(t, func() bool {
+		return finalizationCtx.Err() != nil
+	}, 3*time.Second, 10*time.Millisecond)
+}
+
+func TestNewFinalizationContext_ReservesShutdownTimeForMetadata(t *testing.T) {
+	receivedAt := time.Now().Add(-12 * time.Second)
+	parentCtx, cancelParent := context.WithCancelCause(context.Background())
+	cancelParent(launcherTestSignalCause{signal: syscall.SIGTERM, receivedAt: receivedAt})
+
+	artifactCtx, cancelArtifact := newFinalizationContext(parentCtx, metadataFinalizationReserve)
+	defer cancelArtifact()
+	metadataCtx, cancelMetadata := newFinalizationContext(parentCtx, 0)
+	defer cancelMetadata()
+
+	artifactDeadline, hasDeadline := artifactCtx.Deadline()
+	require.True(t, hasDeadline)
+	metadataDeadline, hasDeadline := metadataCtx.Deadline()
+	require.True(t, hasDeadline)
+	assert.WithinDuration(
+		t,
+		receivedAt.Add(launcherShutdownTimeout-metadataFinalizationReserve),
+		artifactDeadline,
+		100*time.Millisecond,
+	)
+	assert.WithinDuration(t, receivedAt.Add(launcherShutdownTimeout), metadataDeadline, 100*time.Millisecond)
+	assert.NoError(t, artifactCtx.Err())
+	assert.NoError(t, metadataCtx.Err())
+}
+
+func TestFinalizationDeadline_UsesDefaultForPlainCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	deadline := finalizationDeadline(ctx, 0)
+
+	assert.WithinDuration(t, time.Now().Add(launcherFinalizationTimeout), deadline, 100*time.Millisecond)
+}
+
+func TestFinalizationDeadline_UsesHardGraceForFinalMetadataAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	receivedAt := time.Now().Add(-launcherShutdownTimeout)
+	cancel(launcherTestSignalCause{
+		signal:     syscall.SIGTERM,
+		receivedAt: receivedAt,
+	})
+
+	deadline := finalizationDeadline(ctx, 0)
+
+	assert.WithinDuration(t, time.Now().Add(minimumFinalizationAttempt), deadline, 100*time.Millisecond)
+	assert.True(t, deadline.Before(receivedAt.Add(launcherHardShutdownTimeout)))
+}
+
+func TestFinalizationDeadline_NeverExceedsPodHardGrace(t *testing.T) {
+	budget := shutdownBudgetForTerminationGracePeriod(5 * time.Second)
+	receivedAt := time.Now().Add(-budget.shutdown)
+	parentCtx := context.WithValue(context.Background(), launcherShutdownBudgetContextKey{}, budget)
+	ctx, cancel := context.WithCancelCause(parentCtx)
+	cancel(launcherTestSignalCause{signal: syscall.SIGTERM, receivedAt: receivedAt})
+
+	deadline := finalizationDeadline(ctx, 0)
+
+	assert.WithinDuration(t, receivedAt.Add(budget.hardShutdown), deadline, 100*time.Millisecond)
+	assert.False(t, deadline.After(receivedAt.Add(budget.hardShutdown)))
+}
+
+func TestExecuteV2RejectsNilOpenBucketConfig(t *testing.T) {
+	_, _, err := executeV2(
+		context.Background(),
+		nil,
+		nil,
+		"",
+		nil,
+		nil,
+		nil,
+		nil,
+		"",
+		nil,
+		"",
+		"",
+		nil,
+	)
+
+	assert.EqualError(t, err, "open bucket config is nil")
 }
 
 // Tests that launcher correctly executes the user component and successfully writes output parameters to file.
