@@ -191,5 +191,12 @@
         "detected_at_pst": "2026-08-24T06:53:00-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/129",
         "primary_location": "backend/src/v2/component/launcher_v2.go"
+    },
+    {
+        "title": "Stored XSS in ml-pipeline-ui pod-info endpoints: /k8s/pod and /k8s/pod/events return Kubernetes objects via res.send(JSON.stringify(...)), which Express serves as text/html with no nosniff/CSP, so attacker-influenced pod fields (annotations/labels/container args/env) render as script in the ml-pipeline-ui origin when a namespace-authorized victim navigates to the pod-info URL \u2014 reviewed fork PR open, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "53faef394d45d8122046ac6b8071b086abb4b6af",
+        "detected_at_pst": "2026-08-30T06:34:58-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/131"
     }
 ]
