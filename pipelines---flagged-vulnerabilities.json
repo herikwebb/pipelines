@@ -198,5 +198,13 @@
         "commit_hash": "53faef394d45d8122046ac6b8071b086abb4b6af",
         "detected_at_pst": "2026-08-30T06:34:58-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/131"
+    },
+    {
+        "title": "ServiceAccount authorization bypass on run/recurring-run creation: only the workflow-level spec.serviceAccountName is authorized, so a user-supplied v1 Argo workflow manifest can pin a privileged account via templates[].serviceAccountName, templateDefaults, executor, artifactGC or podSpecPatch, which Argo prefers over it \u2014 bypassing both ALLOWEDSERVICEACCOUNTS and the 'use' SubjectAccessReview",
+        "status": "active",
+        "commit_hash": "5c07498d796fdb81705716133ea0202a3212d37e",
+        "detected_at_pst": "2026-08-31T07:01:16-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/134",
+        "primary_location": "backend/src/apiserver/resource/resource_manager.go"
     }
 ]
