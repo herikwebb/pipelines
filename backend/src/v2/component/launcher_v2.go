@@ -25,6 +25,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/kubeflow/pipelines/backend/src/v2/common/plugins"
@@ -67,15 +69,64 @@ type LauncherV2Options struct {
 	CaCertPath     string
 }
 
+type componentExecutorFunc func(
+	context.Context,
+	*metadata.Execution,
+) (*pipelinespec.ExecutorOutput, []*metadata.OutputArtifact, error)
+
 type LauncherV2 struct {
-	executionID   int64
-	executorInput *pipelinespec.ExecutorInput
-	component     *pipelinespec.ComponentSpec
-	command       string
-	args          []string
-	options       LauncherV2Options
-	clientManager client_manager.ClientManagerInterface
+	executionID       int64
+	executorInput     *pipelinespec.ExecutorInput
+	component         *pipelinespec.ComponentSpec
+	command           string
+	args              []string
+	options           LauncherV2Options
+	clientManager     client_manager.ClientManagerInterface
+	componentExecutor componentExecutorFunc
 }
+
+const (
+	userCommandTerminationGracePeriod = 10 * time.Second
+	// These are fallback budgets used only when the launcher's pod setting is
+	// unavailable. Normal execution derives its budgets from the pod's actual
+	// terminationGracePeriodSeconds.
+	launcherFinalizationTimeout = 15 * time.Second
+	launcherShutdownTimeout     = 25 * time.Second
+	launcherHardShutdownTimeout = 30 * time.Second
+	metadataFinalizationReserve = 10 * time.Second
+	// Allow one last best-effort metadata call within the pod's hard grace
+	// deadline if earlier phases exhaust the soft shutdown budget.
+	minimumFinalizationAttempt     = time.Second
+	userCommandKillWaitPeriod      = time.Second
+	processGroupPollInterval       = 50 * time.Millisecond
+	podShutdownBudgetLookupTimeout = 5 * time.Second
+)
+
+type launcherShutdownBudget struct {
+	userCommandGrace    time.Duration
+	finalization        time.Duration
+	shutdown            time.Duration
+	hardShutdown        time.Duration
+	metadataReserve     time.Duration
+	minimumFinalization time.Duration
+	commandKillWait     time.Duration
+}
+
+type launcherShutdownBudgetContextKey struct{}
+
+var (
+	defaultLauncherShutdownBudget = launcherShutdownBudget{
+		userCommandGrace:    userCommandTerminationGracePeriod,
+		finalization:        launcherFinalizationTimeout,
+		shutdown:            launcherShutdownTimeout,
+		hardShutdown:        launcherHardShutdownTimeout,
+		metadataReserve:     metadataFinalizationReserve,
+		minimumFinalization: minimumFinalizationAttempt,
+		commandKillWait:     userCommandKillWaitPeriod,
+	}
+	errUserCommandCleanupIncomplete = errors.New("user command cleanup did not finish")
+	errUserCommandWaitIncomplete    = fmt.Errorf("user command wait did not finish: %w", errUserCommandCleanupIncomplete)
+)
 
 // Client is the struct to hold the Kubernetes Clientset
 type kubernetesClient struct {
@@ -174,9 +225,111 @@ type OpenBucketConfig struct {
 	config    *objectstore.Config
 }
 
+func minimumDuration(left, right time.Duration) time.Duration {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func shutdownBudgetForTerminationGracePeriod(gracePeriod time.Duration) launcherShutdownBudget {
+	if gracePeriod < 0 {
+		return defaultLauncherShutdownBudget
+	}
+	// Keep a small margin for kubelet to stop the launcher itself, then divide
+	// the usable time among user-command termination, artifact work, and the
+	// metadata reserve. The command share scales with longer pod grace periods;
+	// metadata keeps its existing cap so artifact and publication work retain
+	// the remaining shutdown window.
+	safetyMargin := minimumDuration(time.Second, gracePeriod/10)
+	shutdown := gracePeriod - safetyMargin
+	phaseShare := shutdown / 3
+	return launcherShutdownBudget{
+		userCommandGrace:    phaseShare,
+		finalization:        shutdown,
+		shutdown:            shutdown,
+		hardShutdown:        gracePeriod,
+		metadataReserve:     minimumDuration(metadataFinalizationReserve, phaseShare),
+		minimumFinalization: minimumDuration(minimumFinalizationAttempt, phaseShare),
+		commandKillWait:     minimumDuration(userCommandKillWaitPeriod, phaseShare),
+	}
+}
+
+func shutdownBudgetFromContext(ctx context.Context) launcherShutdownBudget {
+	if budget, ok := ctx.Value(launcherShutdownBudgetContextKey{}).(launcherShutdownBudget); ok {
+		return budget
+	}
+	return defaultLauncherShutdownBudget
+}
+
+func (l *LauncherV2) withPodShutdownBudget(ctx context.Context) context.Context {
+	if l.clientManager == nil || l.clientManager.K8sClient() == nil || l.options.PodName == "" {
+		return ctx
+	}
+	lookupCtx, cancelLookup := context.WithTimeout(ctx, podShutdownBudgetLookupTimeout)
+	defer cancelLookup()
+	pod, err := l.clientManager.K8sClient().CoreV1().Pods(l.options.Namespace).Get(
+		lookupCtx,
+		l.options.PodName,
+		metav1.GetOptions{},
+	)
+	if err != nil {
+		// The shipped pipeline-runner role grants pods/get. Custom service
+		// accounts may omit it, so preserve compatibility with fallback budgets.
+		glog.Warningf("Failed to read pod termination grace period within %s; using launcher shutdown defaults: %v", podShutdownBudgetLookupTimeout, err)
+		return ctx
+	}
+	if pod.Spec.TerminationGracePeriodSeconds == nil {
+		return ctx
+	}
+	gracePeriod := time.Duration(*pod.Spec.TerminationGracePeriodSeconds) * time.Second
+	if gracePeriod == 0 {
+		glog.Warning("Pod terminationGracePeriodSeconds is zero; graceful command cleanup and metadata finalization cannot be guaranteed")
+	}
+	budget := shutdownBudgetForTerminationGracePeriod(gracePeriod)
+	glog.Infof(
+		"Using pod termination grace period %s for launcher shutdown (command grace %s, metadata reserve %s, safety margin %s)",
+		gracePeriod,
+		budget.userCommandGrace,
+		budget.metadataReserve,
+		gracePeriod-budget.shutdown,
+	)
+	return context.WithValue(ctx, launcherShutdownBudgetContextKey{}, budget)
+}
+
+func cancellationBeforeCompletion(ctx context.Context, completionCommitted bool) error {
+	if completionCommitted {
+		return nil
+	}
+	return context.Cause(ctx)
+}
+
+func statusAtCompletionSnapshot(
+	ctx context.Context,
+	completionReady bool,
+	status pb.Execution_State,
+) pb.Execution_State {
+	if cancellationBeforeCompletion(ctx, completionReady) != nil {
+		return pb.Execution_FAILED
+	}
+	return status
+}
+
 // Execute calls executeV2, updates the cache, and publishes the results to MLMD.
 func (l *LauncherV2) Execute(ctx context.Context) (err error) {
+	ctx = l.withPodShutdownBudget(ctx)
+	// completionCommitted becomes true only after the task body and outputs
+	// complete and MLMD accepts the corresponding COMPLETE publication.
+	completionCommitted := false
+	completionReady := false
 	defer func() {
+		if cause := cancellationBeforeCompletion(ctx, completionCommitted); cause != nil {
+			if err == nil {
+				err = cause
+			} else if !errors.Is(err, cause) {
+				err = fmt.Errorf("%w: %w", err, cause)
+			}
+		}
 		if err != nil {
 			err = fmt.Errorf("failed to execute component: %w", err)
 		}
@@ -191,19 +344,27 @@ func (l *LauncherV2) Execute(ctx context.Context) (err error) {
 	var dispatcher plugins.TaskPluginDispatcher
 	status := pb.Execution_FAILED
 	defer func() {
+		status = statusAtCompletionSnapshot(ctx, completionReady, status)
 		if execution == nil {
 			glog.Errorf("Skipping publish since execution is nil. Original err is: %v", err)
 			return
 		}
 
-		if perr := l.publish(ctx, execution, executorOutput, outputArtifacts, status); perr != nil {
+		finalizationCtx, cancelFinalization := newFinalizationContext(ctx, 0)
+		defer cancelFinalization()
+
+		if perr := l.publish(finalizationCtx, execution, executorOutput, outputArtifacts, status); perr != nil {
 			if err != nil {
-				err = fmt.Errorf("failed to publish execution with error %s after execution failed: %s", perr.Error(), err.Error())
+				err = fmt.Errorf("failed to publish execution with error %s after execution failed: %w", perr.Error(), err)
 			} else {
 				err = perr
 			}
+		} else {
+			glog.Infof("publish success.")
+			if completionReady && status == pb.Execution_COMPLETE {
+				completionCommitted = true
+			}
 		}
-		glog.Infof("publish success.")
 
 		if dispatcher != nil {
 			taskPluginInfo := &plugins.TaskInfo{
@@ -211,7 +372,7 @@ func (l *LauncherV2) Execute(ctx context.Context) (err error) {
 				ScalarMetrics: metadata.FormatScalarMetricArtifacts(outputArtifacts),
 				Parameters:    metadata.FormatExecutionParameters(execution),
 			}
-			dispatchErr := dispatcher.OnTaskEnd(ctx, taskPluginInfo)
+			dispatchErr := dispatcher.OnTaskEnd(finalizationCtx, taskPluginInfo)
 			if dispatchErr != nil {
 				glog.Errorf("failed to dispatch task end: %v", dispatchErr)
 			}
@@ -219,14 +380,29 @@ func (l *LauncherV2) Execute(ctx context.Context) (err error) {
 
 		// At the end of the current task, we check the statuses of all tasks in
 		// the current DAG and update the DAG's status accordingly.
-		dag, err := l.clientManager.MetadataClient().GetDAG(ctx, execution.GetExecution().CustomProperties["parent_dag_id"].GetIntValue())
-		if err != nil {
-			glog.Errorf("DAG Status Update: failed to get DAG: %s", err.Error())
+		dag, dagErr := l.clientManager.MetadataClient().GetDAG(finalizationCtx, execution.GetExecution().CustomProperties["parent_dag_id"].GetIntValue())
+		if dagErr != nil {
+			glog.Errorf("DAG Status Update: failed to get DAG: %s", dagErr.Error())
+			return
 		}
-		pipeline, _ := l.clientManager.MetadataClient().GetPipelineFromExecution(ctx, execution.GetID())
-		err = l.clientManager.MetadataClient().UpdateDAGExecutionsState(ctx, dag, pipeline)
-		if err != nil {
-			glog.Errorf("failed to update DAG state: %s", err.Error())
+		if dag == nil {
+			glog.Errorf("DAG Status Update: metadata client returned a nil DAG")
+			return
+		}
+		pipeline, dagErr := l.clientManager.MetadataClient().GetPipelineFromExecution(finalizationCtx, execution.GetID())
+		if dagErr != nil {
+			glog.Errorf("DAG Status Update: failed to get pipeline: %s", dagErr.Error())
+			return
+		}
+		// The real metadata client always returns a Pipeline when err is nil;
+		// treat a nil value from another implementation as an invalid response.
+		if pipeline == nil {
+			glog.Errorf("DAG Status Update: metadata client returned a nil pipeline")
+			return
+		}
+		dagErr = l.clientManager.MetadataClient().UpdateDAGExecutionsState(finalizationCtx, dag, pipeline)
+		if dagErr != nil {
+			glog.Errorf("failed to update DAG state: %s", dagErr.Error())
 		}
 	}()
 	executedStartedTime := time.Now().Unix()
@@ -249,54 +425,20 @@ func (l *LauncherV2) Execute(ctx context.Context) (err error) {
 		}
 	}
 	fingerPrint := execution.FingerPrint()
-	storeSessionInfo, err := objectstore.GetSessionInfoFromString(execution.GetPipeline().GetStoreSessionInfo())
-	if err != nil {
-		return err
+	if l.componentExecutor != nil {
+		executorOutput, outputArtifacts, err = l.componentExecutor(ctx, execution)
+	} else {
+		executorOutput, outputArtifacts, err = l.executeComponent(ctx, execution)
 	}
-	pipelineRoot := execution.GetPipeline().GetPipelineRoot()
-	bucketConfig, err := objectstore.ParseBucketConfig(pipelineRoot, storeSessionInfo)
-	if err != nil {
-		return err
-	}
-
-	openBucketConfig := &OpenBucketConfig{
-		ctx:       ctx,
-		k8sClient: l.clientManager.K8sClient(),
-		namespace: l.options.Namespace,
-		config:    bucketConfig,
-	}
-
-	bucket, err := objectstore.OpenBucket(
-		openBucketConfig.ctx,
-		openBucketConfig.k8sClient,
-		openBucketConfig.namespace,
-		openBucketConfig.config,
-	)
-	if err != nil {
-		return err
-	}
-	if err = prepareOutputFolders(l.executorInput); err != nil {
-		return err
-	}
-	executorOutput, outputArtifacts, err = executeV2(
-		ctx,
-		l.executorInput,
-		l.component,
-		l.command,
-		l.args,
-		bucket,
-		bucketConfig,
-		l.clientManager.MetadataClient(),
-		l.options.Namespace,
-		l.clientManager.K8sClient(),
-		l.options.PublishLogs,
-		l.options.CaCertPath,
-		openBucketConfig,
-	)
 	if err != nil {
 		return err
 	}
 	status = pb.Execution_COMPLETE
+	// A nil component result means user code completed and its outputs were
+	// persisted. Treat that as the completion boundary even when cancellation
+	// raced the return; the critical MLMD publication still decides whether
+	// completion is committed.
+	completionReady = true
 	// if fingerPrint is not empty, it means this task enables cache but it does not hit cache, we need to create cache entry for this task
 	if fingerPrint != "" {
 		id := execution.GetID()
@@ -313,10 +455,136 @@ func (l *LauncherV2) Execute(ctx context.Context) (err error) {
 			FinishedAt:      timestamppb.New(time.Unix(time.Now().Unix(), 0)),
 			Fingerprint:     fingerPrint,
 		}
-		return l.clientManager.CacheClient().CreateExecutionCache(ctx, task)
+		if ctx.Err() != nil {
+			glog.Warningf("Skipping execution cache creation because launcher shutdown began after the task completed: %v", context.Cause(ctx))
+		} else if cacheErr := l.clientManager.CacheClient().CreateExecutionCache(ctx, task); cacheErr != nil {
+			if ctx.Err() != nil {
+				glog.Warningf("Skipping execution cache creation interrupted by launcher shutdown after the task completed: %v", cacheErr)
+			} else {
+				return cacheErr
+			}
+		}
+	}
+	return nil
+}
+
+func (l *LauncherV2) executeComponent(
+	ctx context.Context,
+	execution *metadata.Execution,
+) (*pipelinespec.ExecutorOutput, []*metadata.OutputArtifact, error) {
+	storeSessionInfo, err := objectstore.GetSessionInfoFromString(execution.GetPipeline().GetStoreSessionInfo())
+	if err != nil {
+		return nil, nil, err
+	}
+	pipelineRoot := execution.GetPipeline().GetPipelineRoot()
+	bucketConfig, err := objectstore.ParseBucketConfig(pipelineRoot, storeSessionInfo)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return nil
+	openBucketConfig := &OpenBucketConfig{
+		ctx:       ctx,
+		k8sClient: l.clientManager.K8sClient(),
+		namespace: l.options.Namespace,
+		config:    bucketConfig,
+	}
+
+	bucket, err := objectstore.OpenBucket(
+		openBucketConfig.ctx,
+		openBucketConfig.k8sClient,
+		openBucketConfig.namespace,
+		openBucketConfig.config,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = prepareOutputFolders(l.executorInput); err != nil {
+		return nil, nil, err
+	}
+	executorOutput, outputArtifacts, err := executeV2(
+		ctx,
+		l.executorInput,
+		l.component,
+		l.command,
+		l.args,
+		bucket,
+		bucketConfig,
+		l.clientManager.MetadataClient(),
+		l.options.Namespace,
+		l.clientManager.K8sClient(),
+		l.options.PublishLogs,
+		l.options.CaCertPath,
+		openBucketConfig,
+	)
+	if err != nil {
+		return executorOutput, outputArtifacts, err
+	}
+	return executorOutput, outputArtifacts, nil
+}
+
+func finalizationDeadline(ctx context.Context, shutdownReserve time.Duration) time.Time {
+	now := time.Now()
+	budget := shutdownBudgetFromContext(ctx)
+	deadline := now.Add(budget.finalization)
+	var signalCause timedSignalCausedCancellation
+	if errors.As(context.Cause(ctx), &signalCause) {
+		shutdownDeadline := signalCause.ReceivedAt().Add(budget.shutdown - shutdownReserve)
+		if shutdownDeadline.Before(deadline) {
+			deadline = shutdownDeadline
+		}
+		if shutdownReserve == 0 {
+			minimumDeadline := now.Add(budget.minimumFinalization)
+			hardDeadline := signalCause.ReceivedAt().Add(budget.hardShutdown)
+			if deadline.Before(minimumDeadline) {
+				deadline = minimumDeadline
+				if hardDeadline.Before(deadline) {
+					deadline = hardDeadline
+				}
+			}
+		}
+		if deadline.Before(now) {
+			glog.Warningf("Launcher shutdown budget was exhausted before finalization; the final attempt will use an already-expired deadline")
+		}
+		return deadline
+	}
+	minimumDeadline := now.Add(budget.minimumFinalization)
+	if deadline.Before(minimumDeadline) {
+		deadline = minimumDeadline
+	}
+	return deadline
+}
+
+func newFinalizationContext(ctx context.Context, shutdownReserve time.Duration) (context.Context, context.CancelFunc) {
+	parentWithoutCancel := context.WithoutCancel(ctx)
+	if ctx.Err() != nil {
+		return context.WithDeadline(parentWithoutCancel, finalizationDeadline(ctx, shutdownReserve))
+	}
+
+	finalizationCtx, cancelFinalization := context.WithCancel(parentWithoutCancel)
+	stopWaiting := make(chan struct{})
+	var stopOnce sync.Once
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-stopWaiting:
+			return
+		}
+
+		shutdownTimer := time.NewTimer(time.Until(finalizationDeadline(ctx, shutdownReserve)))
+		defer shutdownTimer.Stop()
+		select {
+		case <-shutdownTimer.C:
+			cancelFinalization()
+		case <-stopWaiting:
+		}
+	}()
+
+	return finalizationCtx, func() {
+		stopOnce.Do(func() {
+			close(stopWaiting)
+			cancelFinalization()
+		})
+	}
 }
 
 func (l *LauncherV2) Info() string {
@@ -400,6 +668,10 @@ func (l *LauncherV2) publish(
 	return nil
 }
 
+func shouldSkipOutputUploads(err error) bool {
+	return errors.Is(err, errUserCommandWaitIncomplete)
+}
+
 // executeV2 handles placeholder substitution for inputs, calls execute to
 // execute end user logic, and uploads the resulting output Artifacts.
 func executeV2(
@@ -417,6 +689,9 @@ func executeV2(
 	customCAPath string,
 	openBucketConfig *OpenBucketConfig,
 ) (*pipelinespec.ExecutorOutput, []*metadata.OutputArtifact, error) {
+	if openBucketConfig == nil {
+		return nil, nil, fmt.Errorf("open bucket config is nil")
+	}
 	qualifyExecutorLogsForRetry(ctx, executorInput, publishLogs, namespace, k8sClient)
 
 	// Add parameter default values to executorInput, if there is not already a user input.
@@ -445,14 +720,24 @@ func executeV2(
 		publishLogs,
 		customCAPath,
 	)
+	if shouldSkipOutputUploads(err) {
+		// exec.Cmd.Wait may still own stdout/stderr copy goroutines. Do not race
+		// them by uploading output or log files while cleanup remains in flight.
+		glog.Errorf("User command cleanup remains incomplete; skipping output artifact and log uploads: %v", err)
+		return executorOutput, nil, err
+	}
+	artifactCtx, cancelArtifactFinalization := newFinalizationContext(ctx, shutdownBudgetFromContext(ctx).metadataReserve)
+	defer cancelArtifactFinalization()
+	artifactOpenBucketConfig := *openBucketConfig
+	artifactOpenBucketConfig.ctx = artifactCtx
 	if err != nil {
 		glog.Errorf("Component failed to execute successfully: %v", err)
 
-		outputArtifacts, _ := uploadOutputArtifactsWithRetry(ctx, executorInput, executorOutput, uploadOutputArtifactsOptions{
+		outputArtifacts, _ := uploadOutputArtifactsWithRetry(artifactCtx, executorInput, executorOutput, uploadOutputArtifactsOptions{
 			bucketConfig:   bucketConfig,
 			bucket:         bucket,
 			metadataClient: metadataClient,
-		}, false, openBucketConfig, 2)
+		}, false, &artifactOpenBucketConfig, 2)
 
 		return executorOutput, outputArtifacts, err
 	}
@@ -464,11 +749,11 @@ func executeV2(
 		return nil, nil, err
 	}
 
-	outputArtifacts, err := uploadOutputArtifactsWithRetry(ctx, executorInput, executorOutput, uploadOutputArtifactsOptions{
+	outputArtifacts, err := uploadOutputArtifactsWithRetry(artifactCtx, executorInput, executorOutput, uploadOutputArtifactsOptions{
 		bucketConfig:   bucketConfig,
 		bucket:         bucket,
 		metadataClient: metadataClient,
-	}, true, openBucketConfig, 2)
+	}, true, &artifactOpenBucketConfig, 2)
 
 	if err != nil {
 		return nil, nil, err
@@ -652,6 +937,259 @@ func getLogWriter(artifacts map[string]*pipelinespec.ArtifactList) (writer io.Wr
 	return io.MultiWriter(os.Stdout, logFile)
 }
 
+// commandWithGracefulCancellation supports Run only; calling promoted
+// exec.Cmd lifecycle methods would bypass its cancellation contract.
+type commandWithGracefulCancellation struct {
+	*exec.Cmd
+	ctx                    context.Context
+	terminationGracePeriod time.Duration
+	killWaitPeriod         time.Duration
+}
+
+type signalCausedCancellation interface {
+	error
+	Signal() syscall.Signal
+}
+
+type timedSignalCausedCancellation interface {
+	signalCausedCancellation
+	ReceivedAt() time.Time
+}
+
+func cancellationSignal(ctx context.Context) syscall.Signal {
+	var signalCause signalCausedCancellation
+	if errors.As(context.Cause(ctx), &signalCause) {
+		return signalCause.Signal()
+	}
+	return syscall.SIGTERM
+}
+
+// newCommandWithGracefulCancellation runs the user command in its own process
+// group so cancellation reaches descendants as well as the direct process.
+func newCommandWithGracefulCancellation(
+	ctx context.Context,
+	terminationGracePeriod time.Duration,
+	name string,
+	args ...string,
+) *commandWithGracefulCancellation {
+	command := exec.Command(name, args...)
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	budget := shutdownBudgetFromContext(ctx)
+	return &commandWithGracefulCancellation{
+		Cmd:                    command,
+		ctx:                    ctx,
+		terminationGracePeriod: minimumDuration(terminationGracePeriod, budget.userCommandGrace),
+		killWaitPeriod:         budget.commandKillWait,
+	}
+}
+
+func waitForCommandExit(waitResult <-chan error, timeout time.Duration) (bool, error) {
+	waitTimer := time.NewTimer(timeout)
+	defer waitTimer.Stop()
+	select {
+	case err := <-waitResult:
+		return false, err
+	case <-waitTimer.C:
+		return true, nil
+	}
+}
+
+func waitForProcessGroupExit(processGroupID int, timeout time.Duration) bool {
+	if !processGroupRunning(processGroupID) {
+		return true
+	}
+	waitTimer := time.NewTimer(timeout)
+	defer waitTimer.Stop()
+	poll := time.NewTicker(processGroupPollInterval)
+	defer poll.Stop()
+	for {
+		select {
+		case <-poll.C:
+			if !processGroupRunning(processGroupID) {
+				return true
+			}
+		case <-waitTimer.C:
+			return !processGroupRunning(processGroupID)
+		}
+	}
+}
+
+func commandCancellationResult(ctx context.Context, commandErr error) error {
+	if commandErr != nil {
+		return commandErr
+	}
+	return context.Cause(ctx)
+}
+
+// Run gives the command and its descendants a bounded opportunity to handle
+// the cancellation signal, then returns the cause even after a clean exit.
+func (command *commandWithGracefulCancellation) Run() error {
+	if err := command.ctx.Err(); err != nil {
+		return context.Cause(command.ctx)
+	}
+	if err := command.Start(); err != nil {
+		return err
+	}
+
+	processGroupID := command.Process.Pid
+	waitResult := make(chan error, 1)
+	go func() {
+		waitResult <- command.Wait()
+	}()
+
+	var commandErr error
+	commandExited := false
+	select {
+	case commandErr = <-waitResult:
+		commandExited = true
+		if command.ctx.Err() == nil {
+			return commandErr
+		}
+	case <-command.ctx.Done():
+	}
+	if commandExited && !processGroupRunning(processGroupID) {
+		return commandCancellationResult(command.ctx, commandErr)
+	}
+
+	// Negative-PGID signaling has an unavoidable PID-reuse TOCTOU window. Keep
+	// it inside the period where the group has a known non-zombie member; the
+	// launcher runs in the pod's isolated PID namespace, further limiting risk.
+	if err := syscall.Kill(-processGroupID, cancellationSignal(command.ctx)); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			if !commandExited {
+				_ = command.Process.Kill()
+				waitTimedOut, waitErr := waitForCommandExit(waitResult, command.killWaitPeriod)
+				if waitTimedOut {
+					return fmt.Errorf("timed out waiting for user command after its process group exited: %w: %w", errUserCommandWaitIncomplete, context.Cause(command.ctx))
+				}
+				commandErr = waitErr
+			}
+			return commandCancellationResult(command.ctx, commandErr)
+		}
+
+		_ = command.Process.Kill()
+		if !commandExited {
+			var waitTimedOut bool
+			waitTimedOut, commandErr = waitForCommandExit(waitResult, command.killWaitPeriod)
+			if waitTimedOut {
+				return fmt.Errorf("timed out waiting for user command after force-killing it: %w: %w", err, errUserCommandWaitIncomplete)
+			}
+		}
+		if commandErr != nil {
+			return fmt.Errorf("failed to terminate user command process group: %w: %w", err, commandErr)
+		}
+		return fmt.Errorf("failed to terminate user command process group: %w", err)
+	}
+
+	gracePeriod := time.NewTimer(command.terminationGracePeriod)
+	defer gracePeriod.Stop()
+	processGroupPoll := time.NewTicker(processGroupPollInterval)
+	defer processGroupPoll.Stop()
+
+	for {
+		if !processGroupRunning(processGroupID) {
+			if !commandExited {
+				_ = command.Process.Kill()
+				waitTimedOut, waitErr := waitForCommandExit(waitResult, command.killWaitPeriod)
+				if waitTimedOut {
+					return fmt.Errorf("timed out waiting for user command after its process group exited: %w: %w", errUserCommandWaitIncomplete, context.Cause(command.ctx))
+				}
+				commandErr = waitErr
+			}
+			return commandCancellationResult(command.ctx, commandErr)
+		}
+
+		select {
+		case commandErr = <-waitResult:
+			commandExited = true
+			waitResult = nil
+		case <-processGroupPoll.C:
+		case <-gracePeriod.C:
+			killErr := syscall.Kill(-processGroupID, syscall.SIGKILL)
+			if !commandExited {
+				var waitTimedOut bool
+				waitTimedOut, commandErr = waitForCommandExit(waitResult, command.killWaitPeriod)
+				if waitTimedOut {
+					if killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
+						return fmt.Errorf("failed to kill user command process group: %w; timed out waiting for the command: %w", killErr, errUserCommandWaitIncomplete)
+					}
+					return fmt.Errorf("timed out waiting for user command after killing its process group: %w", errUserCommandWaitIncomplete)
+				}
+			}
+			if killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
+				if commandErr != nil {
+					return fmt.Errorf("failed to kill user command process group: %w: %w", killErr, commandErr)
+				}
+				return fmt.Errorf("failed to kill user command process group: %w", killErr)
+			}
+			if killErr == nil && !waitForProcessGroupExit(processGroupID, command.killWaitPeriod) {
+				return fmt.Errorf("timed out waiting for user command process group to exit after SIGKILL: %w: %w", errUserCommandCleanupIncomplete, context.Cause(command.ctx))
+			}
+			return commandCancellationResult(command.ctx, commandErr)
+		}
+	}
+}
+
+func processGroupExists(processGroupID int) bool {
+	// The kernel retains the PGID while any descendant remains in the group.
+	// Once the group is empty, return immediately without signaling it again.
+	err := syscall.Kill(-processGroupID, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+func processGroupRunning(processGroupID int) bool {
+	return processGroupRunningWithProc(processGroupID, "/proc", processGroupExists)
+}
+
+func processGroupRunningWithProc(
+	processGroupID int,
+	procRoot string,
+	groupExists func(int) bool,
+) bool {
+	// Avoid scanning /proc after the kernel has already confirmed that the
+	// process group is empty.
+	if !groupExists(processGroupID) {
+		return false
+	}
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return true
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if _, err := strconv.Atoi(entry.Name()); err != nil {
+			continue
+		}
+		stat, err := os.ReadFile(filepath.Join(procRoot, entry.Name(), "stat"))
+		if err != nil {
+			// Processes can disappear during the scan. In normal Linux pods stat
+			// is readable for remaining processes, so unrelated unreadable entries
+			// must not turn an observed zombie-only group into a live one.
+			continue
+		}
+		// The command name is parenthesized and may contain spaces, so parse
+		// state, parent PID, and process-group ID after its closing parenthesis.
+		closingParenthesis := bytes.LastIndexByte(stat, ')')
+		if closingParenthesis < 0 {
+			continue
+		}
+		fields := strings.Fields(string(stat[closingParenthesis+1:]))
+		if len(fields) < 3 {
+			continue
+		}
+		groupID, err := strconv.Atoi(fields[2])
+		if err != nil {
+			continue
+		}
+		if groupID == processGroupID && fields[0] != "Z" {
+			return true
+		}
+	}
+	return false
+}
+
 // execute downloads input artifacts, prepares the execution environment,
 // executes the end user code, and returns the outputs.
 func execute(
@@ -704,7 +1242,12 @@ func execute(
 	}
 
 	// Prepare command that will execute end user code.
-	command := exec.Command(cmd, args...)
+	command := newCommandWithGracefulCancellation(
+		ctx,
+		shutdownBudgetFromContext(ctx).userCommandGrace,
+		cmd,
+		args...,
+	)
 	command.Stdin = os.Stdin
 	// Pipe stdout/stderr to the aforementioned multiWriter.
 	command.Stdout = writer
