@@ -23,5 +23,14 @@
 ## Commits
 
 - Sign commits with `git commit -s`.
+- Every commit must be authored, committed, and signed off by the **human submitter**, never by an agent/tool identity. Automated environments often default the git identity to the agent (for example `Claude <noreply@anthropic.com>`), which makes `git commit -s` sign off as the agent and violates the DCO requirement that the submitter attests to each commit. Before committing, set the repo-local identity to the submitter (`git config user.name` / `git config user.email`) and verify with `git log -1 --format='%an <%ae> / %(trailers:key=Signed-off-by)'` that both the author and the `Signed-off-by:` trailer are the submitter. When adding follow-up commits to a PR the submitter already authored, reuse that same identity (for example `git commit -C <original-commit>`); do not add a second, agent-identity sign-off.
 - Do not add AI agents as commit co-authors.
 - Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for DCO and PR conventions.
+
+## Pull request watch policy
+
+- After you successfully open a pull request (a `create_pull_request` call that
+  succeeds), immediately call `subscribe_pr_activity` for that PR — passing its
+  owner, repo, and number — before ending your turn. This hands the PR to the
+  persistent watcher so review-comment feedback and CI status are tracked and
+  acted on until the PR is merged or closed.
