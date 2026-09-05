@@ -66,7 +66,7 @@ export function getPodInfoHandlers(authorizeFn: AuthorizeFn) {
       res.status(500).send(message);
       return;
     }
-    res.status(200).send(JSON.stringify(pod));
+    res.status(200).json(pod);
   };
 
   const podEventsHandler: Handler = async (req, res) => {
@@ -110,7 +110,7 @@ export function getPodInfoHandlers(authorizeFn: AuthorizeFn) {
       res.status(500).send(message);
       return;
     }
-    res.status(200).send(JSON.stringify(eventList));
+    res.status(200).json(eventList);
   };
 
   return { podInfoHandler, podEventsHandler };
