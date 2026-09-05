@@ -1025,16 +1025,22 @@ func fetchNonDefaultBuckets(
 
 		// The artifact does not belong under the object store path for this run. Cases:
 		// 1. Artifact is cached from a different run, so it may still be in the default bucket, but under a different run id subpath
-		// 2. Artifact is imported from the same bucket, but from a different path (re-use the same session)
+		// 2. Artifact is imported from the same bucket, but from a different path (default to using user env in this case)
 		// 3. Artifact is imported from a different bucket, or obj store (default to using user env in this case)
+		//
+		// The artifact URI is author-controlled (e.g. a dsl.importer uri), so the
+		// run's default (shared) object-store session is never lent to a URI that
+		// resolves outside this run's pipeline-root prefix. Doing so would let a
+		// task read arbitrary keys in the shared bucket via the privileged shared
+		// credentials, including other tenants' artifacts. Such URIs are resolved
+		// with their own session info instead, which fails closed when the caller
+		// holds no credentials for them. Legitimate same-bucket reads under this
+		// run's pipeline root (including cross-run cache reuse) are served by the
+		// default-bucket path in downloadArtifacts and never reach here.
 		if !strings.HasPrefix(artifact.Uri, defaultBucketConfig.PrefixedBucket()) {
 			nonDefaultBucketConfig, parseErr := objectstore.ParseBucketConfigForArtifactURI(artifact.Uri)
 			if parseErr != nil {
 				return nonDefaultBuckets, fmt.Errorf("failed to parse bucketConfig for output artifact %q with uri %q: %w", name, artifact.GetUri(), parseErr)
-			}
-			// check if it's same bucket but under a different path, re-use the default bucket session in this case.
-			if (nonDefaultBucketConfig.Scheme == defaultBucketConfig.Scheme) && (nonDefaultBucketConfig.BucketName == defaultBucketConfig.BucketName) {
-				nonDefaultBucketConfig.SessionInfo = defaultBucketConfig.SessionInfo
 			}
 			nonDefaultBucket, bucketErr := objectstore.OpenBucket(ctx, k8sClient, namespace, nonDefaultBucketConfig)
 			if bucketErr != nil {
