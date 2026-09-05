@@ -45,6 +45,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/yaml"
 )
@@ -170,6 +171,225 @@ func (w *Workflow) SetServiceAccount(serviceAccount string) {
 
 func (w *Workflow) ServiceAccount() string {
 	return w.Spec.ServiceAccountName
+}
+
+func (w *Workflow) walkTemplates(visit func(*workflowapi.Template) error) error {
+	hasReference := func(ref *workflowapi.TemplateRef, hooks workflowapi.LifecycleHooks) bool {
+		if ref != nil {
+			return true
+		}
+		for _, hook := range hooks {
+			if hook.TemplateRef != nil {
+				return true
+			}
+		}
+		return false
+	}
+	referenceError := func() error {
+		return NewInvalidInputError("external workflow template references cannot be authorized; inline the referenced template")
+	}
+
+	var walk func(*workflowapi.Template) error
+	walk = func(tmpl *workflowapi.Template) error {
+		if tmpl == nil {
+			return nil
+		}
+		if visit != nil {
+			if err := visit(tmpl); err != nil {
+				return err
+			}
+		}
+		for i := range tmpl.Steps {
+			for j := range tmpl.Steps[i].Steps {
+				step := &tmpl.Steps[i].Steps[j]
+				if hasReference(step.TemplateRef, step.Hooks) {
+					return referenceError()
+				}
+				if err := walk(step.Inline); err != nil {
+					return err
+				}
+			}
+		}
+		if tmpl.DAG != nil {
+			for i := range tmpl.DAG.Tasks {
+				task := &tmpl.DAG.Tasks[i]
+				if hasReference(task.TemplateRef, task.Hooks) {
+					return referenceError()
+				}
+				if err := walk(task.Inline); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
+	if w.Spec.WorkflowTemplateRef != nil || hasReference(nil, w.Spec.Hooks) {
+		return referenceError()
+	}
+	if err := walk(w.Spec.TemplateDefaults); err != nil {
+		return err
+	}
+	for i := range w.Spec.Templates {
+		if err := walk(&w.Spec.Templates[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNoExternalTemplateReferences rejects template references because KFP
+// does not resolve them while validating or authorizing a workflow.
+func (w *Workflow) validateNoExternalTemplateReferences() error {
+	return w.walkTemplates(nil)
+}
+
+// ServiceAccounts returns every service account that pods created by the
+// workflow can use.
+func (w *Workflow) ServiceAccounts(allowCompilerPodSpecPatch bool) ([]string, error) {
+	workflowAccount := w.Spec.ServiceAccountName
+	if workflowAccount == "" {
+		workflowAccount = "default"
+	}
+	accounts := make([]string, 0, len(w.Spec.Templates)+1)
+	seen := make(map[string]struct{}, len(w.Spec.Templates)+1)
+	add := func(account string) {
+		if account == workflowServiceAccountTemplate {
+			account = workflowAccount
+		}
+		if account == "" {
+			return
+		}
+		if _, ok := seen[account]; ok {
+			return
+		}
+		seen[account] = struct{}{}
+		accounts = append(accounts, account)
+	}
+	addPatch := func(patch string) error {
+		patchAccounts, err := serviceAccountsInPodSpecPatch(patch, allowCompilerPodSpecPatch)
+		if err != nil {
+			return err
+		}
+		for _, account := range patchAccounts {
+			add(account)
+		}
+		return nil
+	}
+	add(workflowAccount)
+	if w.Spec.Executor != nil {
+		add(w.Spec.Executor.ServiceAccountName)
+	}
+	for _, plugin := range w.Spec.ExecutorPlugins {
+		if plugin.Spec.Sidecar.AutomountServiceAccountToken {
+			add(plugin.Name + "-executor-plugin")
+		}
+	}
+	if err := addPatch(w.Spec.PodSpecPatch); err != nil {
+		return nil, err
+	}
+
+	var artifactGCPatchAccounts []string
+	artifactGCPatchInspected := false
+
+	visitTemplate := func(tmpl *workflowapi.Template) error {
+		add(tmpl.ServiceAccountName)
+		if tmpl.Executor != nil {
+			add(tmpl.Executor.ServiceAccountName)
+		}
+		if err := addPatch(tmpl.PodSpecPatch); err != nil {
+			return err
+		}
+
+		for i := range tmpl.Outputs.Artifacts {
+			artifact := &tmpl.Outputs.Artifacts[i]
+			strategy := w.GetArtifactGCStrategy(artifact)
+			if strategy == workflowapi.ArtifactGCNever || strategy == workflowapi.ArtifactGCStrategyUndefined {
+				continue
+			}
+			account := ""
+			if w.Spec.ArtifactGC != nil {
+				account = w.Spec.ArtifactGC.ServiceAccountName
+			}
+			if artifact.ArtifactGC != nil && artifact.ArtifactGC.ServiceAccountName != "" {
+				account = artifact.ArtifactGC.ServiceAccountName
+			}
+			if account != "" {
+				add(account)
+				continue
+			}
+			if !artifactGCPatchInspected {
+				artifactGCPatchInspected = true
+				if w.Spec.ArtifactGC != nil {
+					var err error
+					artifactGCPatchAccounts, err = serviceAccountsInPodSpecPatch(w.Spec.ArtifactGC.PodSpecPatch, allowCompilerPodSpecPatch)
+					if err != nil {
+						return err
+					}
+				}
+			}
+			if len(artifactGCPatchAccounts) == 0 {
+				add("default")
+			}
+			for _, patchAccount := range artifactGCPatchAccounts {
+				add(patchAccount)
+			}
+		}
+		return nil
+	}
+
+	if err := w.walkTemplates(visitTemplate); err != nil {
+		return nil, err
+	}
+	return accounts, nil
+}
+
+const (
+	workflowServiceAccountTemplate        = "{{workflow.serviceAccountName}}"
+	podSpecPatchServiceAccountSentinel    = "<unchanged>" // Invalid as a Kubernetes service account name.
+	compilerGeneratedPodSpecPatchTemplate = "{{inputs.parameters.pod-spec-patch}}"
+)
+
+func serviceAccountsInPodSpecPatch(patch string, allowCompilerPatch bool) ([]string, error) {
+	if patch == "" {
+		return nil, nil
+	}
+	if strings.Contains(patch, "{{") {
+		if allowCompilerPatch && strings.TrimSpace(patch) == compilerGeneratedPodSpecPatchTemplate {
+			return nil, nil
+		}
+		return nil, NewInvalidInputError("podSpecPatch contains a template expression, so its service account cannot be authorized before execution; use a literal podSpecPatch")
+	}
+
+	patchJSON, err := yaml.YAMLToJSON([]byte(patch))
+	if err != nil {
+		return nil, NewInvalidInputError("podSpecPatch is not a valid Kubernetes PodSpec patch; provide a literal valid patch: %v", err)
+	}
+	if err := json.Unmarshal(patchJSON, &corev1.PodSpec{}); err != nil {
+		return nil, NewInvalidInputError("podSpecPatch is not a valid Kubernetes PodSpec patch; provide a literal valid patch: %v", err)
+	}
+	baseJSON := []byte(`{"serviceAccountName":"` + podSpecPatchServiceAccountSentinel + `"}`)
+	patchedJSON, err := strategicpatch.StrategicMergePatch(baseJSON, patchJSON, corev1.PodSpec{})
+	if err != nil {
+		return nil, NewInvalidInputError("podSpecPatch is not a valid Kubernetes PodSpec patch; provide a literal valid patch: %v", err)
+	}
+	var patched corev1.PodSpec
+	if err := json.Unmarshal(patchedJSON, &patched); err != nil {
+		return nil, NewInvalidInputError("podSpecPatch is not a valid Kubernetes PodSpec patch; provide a literal valid patch: %v", err)
+	}
+
+	var accounts []string
+	canonicalTouched := patched.ServiceAccountName != podSpecPatchServiceAccountSentinel
+	if canonicalTouched && patched.ServiceAccountName != "" {
+		accounts = append(accounts, patched.ServiceAccountName)
+	}
+	if patched.DeprecatedServiceAccount != "" {
+		accounts = append(accounts, patched.DeprecatedServiceAccount)
+	}
+	if canonicalTouched && patched.ServiceAccountName == "" && patched.DeprecatedServiceAccount == "" {
+		accounts = append(accounts, "default")
+	}
+	return accounts, nil
 }
 
 func (w *Workflow) SpecParameters() SpecParameters {
@@ -814,6 +1034,11 @@ func (w *Workflow) IsV2Compatible() bool {
 }
 
 func (w *Workflow) Validate(lint, ignoreEntrypoint bool) error {
+	// Argo validation receives no external-template getters, so reject
+	// references instead of allowing validation to dereference a nil getter.
+	if err := w.validateNoExternalTemplateReferences(); err != nil {
+		return err
+	}
 	err := validate.Workflow(ArgoContext(), nil, nil, w.Workflow, nil, validate.Opts{
 		Lint:                       lint,
 		IgnoreEntrypoint:           ignoreEntrypoint,

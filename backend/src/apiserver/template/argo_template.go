@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	workflowapi "github.com/argoproj/argo-workflows/v4/pkg/apis/workflow/v1alpha1"
-	"github.com/argoproj/argo-workflows/v4/workflow/validate"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/common"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/model"
 	"github.com/kubeflow/pipelines/backend/src/common/util"
@@ -217,15 +216,12 @@ func ValidateWorkflow(template []byte) (*util.Workflow, error) {
 	if wf.Kind != argoK8sResource {
 		return nil, util.NewInvalidInputError("Unexpected resource type. Expected: %v. Received: %v", argoK8sResource, wf.Kind)
 	}
-	err = validate.Workflow(util.ArgoContext(), nil, nil, &wf, nil, validate.Opts{
-		Lint:                       true,
-		IgnoreEntrypoint:           true,
-		WorkflowTemplateValidation: false, // not used by kubeflow
-	})
+	workflow := util.NewWorkflow(&wf)
+	err = workflow.Validate(true, true)
 	if err != nil {
 		return nil, err
 	}
-	return util.NewWorkflow(&wf), nil
+	return workflow, nil
 }
 
 func AddRuntimeMetadata(wf *workflowapi.Workflow) {
