@@ -95,7 +95,7 @@
         "status": "active",
         "commit_hash": "ed308e29ef449b85c5fd0dc650a022334a0ce207",
         "detected_at_pst": "2026-07-24T06:33:50-07:00",
-        "reported_link": "https://github.com/herikwebb/pipelines/pull/104",
+        "reported_link": "https://github.com/kubeflow/pipelines/pull/14167",
         "primary_location": "frontend/server/workflow-helper.ts"
     },
     {
