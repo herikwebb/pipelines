@@ -167,5 +167,18 @@
         "affected_version": "4.3.0",
         "fixed_version": "4.3.1",
         "severity": "high"
+    },
+    {
+        "title": "stream-json 1.9.1 in frontend/server vulnerable to GHSA-528h-pc64-c93x (npm, medium) - O(depth^2) pick/ignore/filter DoS; no upgrade path because minio 8.0.7 pins stream-json ^1.8.0 and the fix lands in 3.5.0",
+        "status": "no_fix_available",
+        "commit_hash": "8a5ef4038a406fe2529d51ecb9dac2e9f4fb109c",
+        "detected_at_pst": "2026-09-06T06:27:14-07:00",
+        "reported_link": "",
+        "cve_id": "",
+        "ghsa_id": "GHSA-528h-pc64-c93x",
+        "package": "npm:stream-json",
+        "affected_version": "1.9.1",
+        "fixed_version": "3.5.0",
+        "severity": "medium"
     }
 ]
