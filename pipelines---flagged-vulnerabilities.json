@@ -206,5 +206,13 @@
         "detected_at_pst": "2026-08-31T07:01:16-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/134",
         "primary_location": "backend/src/apiserver/resource/resource_manager.go"
+    },
+    {
+        "title": "Workflow-run approval gate ignores needs-ok-to-test: gh-workflow-approve.yml auto-approves fork pull_request runs on any ok-to-test PR, including after a maintainer revokes trust with needs-ok-to-test and across unreviewed force-pushes",
+        "status": "active",
+        "commit_hash": "73c6ad62b6ddc22c117eb415696f0d98f2c99fc0",
+        "detected_at_pst": "2026-09-09T06:45:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/136",
+        "primary_location": ".github/workflows/gh-workflow-approve.yml"
     }
 ]
