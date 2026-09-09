@@ -56,8 +56,16 @@ jobs:
             echo "is_member=false" >> $GITHUB_OUTPUT
           fi
 
+      # 'needs-ok-to-test' revokes test permission for an untrusted author, and
+      # both 'CI Check' and the ci-passed labeler already refuse to run while it
+      # is present. Approving workflow runs must honor it too, otherwise a
+      # maintainer who revokes trust on a PR still has that PR's fork code
+      # executed by every pull_request workflow in the repository.
       - name: Approve Pending Workflow Runs
-        if: steps.membership-check.outputs.is_member == 'true' || contains(github.event.pull_request.labels.*.name, 'ok-to-test')
+        if: >-
+          steps.membership-check.outputs.is_member == 'true' ||
+          (contains(github.event.pull_request.labels.*.name, 'ok-to-test') &&
+          !contains(github.event.pull_request.labels.*.name, 'needs-ok-to-test'))
         uses: actions/github-script@v9
         with:
           retries: 3 # github-script level: retries the entire script on transient API errors
