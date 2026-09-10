@@ -25,6 +25,7 @@ import tempfile
 import time
 from types import ModuleType
 from typing import Any, Dict, List, Optional, TextIO
+import urllib.parse
 import warnings
 import zipfile
 
@@ -332,7 +333,23 @@ class Client:
         return config
 
     def _is_inverse_proxy_host(self, host: str) -> bool:
-        return bool(re.match(r'\S+.googleusercontent.com/{0,1}$', host))
+        """Returns whether ``host`` is a Google inverse-proxy endpoint.
+
+        A match makes the client attach the Application Default
+        Credentials access token to every request, so only a hostname
+        that is genuinely a subdomain of ``googleusercontent.com`` may
+        match. The value is parsed as a URL so that look-alike domains,
+        userinfo, or path components cannot satisfy the check.
+        """
+        if not host:
+            return False
+        url = host if '://' in host else f'https://{host}'
+        try:
+            hostname = urllib.parse.urlsplit(url).hostname
+        except ValueError:
+            return False
+        return bool(hostname) and hostname.lower().endswith(
+            '.googleusercontent.com')
 
     def _get_url_prefix(self) -> str:
         if self._uihost:
