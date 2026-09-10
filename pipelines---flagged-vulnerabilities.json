@@ -204,7 +204,7 @@
         "status": "active",
         "commit_hash": "5c07498d796fdb81705716133ea0202a3212d37e",
         "detected_at_pst": "2026-08-31T07:01:16-07:00",
-        "reported_link": "https://github.com/herikwebb/pipelines/pull/134",
+        "reported_link": "https://github.com/kubeflow/pipelines/pull/14356",
         "primary_location": "backend/src/apiserver/resource/resource_manager.go"
     },
     {
