@@ -214,5 +214,13 @@
         "detected_at_pst": "2026-09-09T06:45:00-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/issues/135",
         "primary_location": ".github/workflows/gh-workflow-approve.yml"
+    },
+    {
+        "title": "GCP access-token exposure in kfp.Client: _is_inverse_proxy_host uses an unanchored, unescaped regex (\\S+.googleusercontent.com/{0,1}$) so look-alike, path-carrying, or userinfo-carrying endpoints trigger the implicit Application Default Credentials token exchange and receive the caller's cloud-platform-scoped Bearer token - fork PR open, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "62516d8c525f146b754cb515cf441dd0290ad841",
+        "detected_at_pst": "2026-09-10T06:20:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/138",
+        "primary_location": "sdk/python/kfp/client/client.py"
     }
 ]
