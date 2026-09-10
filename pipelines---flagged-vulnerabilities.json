@@ -212,7 +212,7 @@
         "status": "active",
         "commit_hash": "73c6ad62b6ddc22c117eb415696f0d98f2c99fc0",
         "detected_at_pst": "2026-09-09T06:45:00-07:00",
-        "reported_link": "https://github.com/herikwebb/pipelines/pull/136",
+        "reported_link": "https://github.com/herikwebb/pipelines/issues/135",
         "primary_location": ".github/workflows/gh-workflow-approve.yml"
     }
 ]
