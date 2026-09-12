@@ -69,9 +69,16 @@ if [[ -z "${PROXY_URL}" ]]; then
 fi
 echo "Proxy URL: ${PROXY_URL}"
 
-# Register the proxy agent
+# Register the proxy agent.
+# The identity token and the access token are credentials: keep them out of the
+# xtrace output (which ends up in the container log) and out of the curl
+# command line by passing the Authorization header through a file descriptor.
+set +x
 VM_ID=$(curl -H 'Metadata-Flavor: Google' "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?format=full&audience=${PROXY_URL}/request-service-account-endpoint"  2>/dev/null)
-RESULT_JSON=$(curl -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "X-Inverting-Proxy-VM-ID: ${VM_ID}" -d "" "${PROXY_URL}/request-service-account-endpoint" 2>/dev/null)
+ACCESS_TOKEN=$(gcloud auth print-access-token)
+RESULT_JSON=$(curl -H @<(printf 'Authorization: Bearer %s\n' "${ACCESS_TOKEN}") -H @<(printf 'X-Inverting-Proxy-VM-ID: %s\n' "${VM_ID}") -d "" "${PROXY_URL}/request-service-account-endpoint" 2>/dev/null)
+unset ACCESS_TOKEN VM_ID
+set -x
 echo "Response from the registration server: ${RESULT_JSON}"
 
 HOSTNAME=$(echo "${RESULT_JSON}" | jq -r ".hostname")
