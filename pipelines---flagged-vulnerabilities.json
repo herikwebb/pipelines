@@ -236,5 +236,12 @@
         "commit_hash": "967db920fe06815e780886ee99dd6db44bd1faab",
         "detected_at_pst": "2026-09-12T06:45:00-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/142"
+    },
+    {
+        "title": "Cross-tenant pipeline metadata disclosure via by-name lookup: PipelineStore.GetPipelineByNameAndNamespace[V1] omit the Namespace predicate when the namespace is empty and getPipelineByName skips the SubjectAccessReview for an empty-namespace get, so an authenticated multi-user tenant calling GetPipelineByName without a namespace receives the newest ready pipeline of that name from any namespace (UUID, namespace, description, tags; v1 also latest-version parameters and code_source_url) - fork PR open, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "967db920fe06815e780886ee99dd6db44bd1faab",
+        "detected_at_pst": "2026-09-12T06:50:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/144"
     }
 ]
