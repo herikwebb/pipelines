@@ -113,6 +113,9 @@ func (s *BaseRunServer) createRun(ctx context.Context, run *model.Run) (*model.R
 	if run.DisplayName == "" {
 		return nil, util.Wrapf(util.NewInvalidInputError("The run name is empty. Please specify a valid name"), "Failed to create a run due to invalid name")
 	}
+	// The run ID is server-assigned. A caller-chosen ID would let the request target
+	// an existing run's primary key, so drop whatever the API client sent.
+	run.UUID = ""
 	experimentId, namespace, err := s.resourceManager.GetValidExperimentNamespacePair(run.ExperimentId, run.Namespace)
 	if err != nil {
 		return nil, util.Wrapf(err, "Failed to create a run due to invalid experimentId and namespace combination")
