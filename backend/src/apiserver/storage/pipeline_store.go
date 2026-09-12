@@ -154,13 +154,14 @@ func (s *PipelineStore) GetPipelineByNameAndNamespaceV1(name string, namespace s
 		// name filtering (see filter.AddToSelect) and the scoped
 		// case-insensitive uniqueness enforced on PostgreSQL (see
 		// expressionIndexes in client_manager.go).
+		// The namespace predicate is always applied: an empty namespace selects
+		// shared pipelines only, matching ListPipelines, and never acts as a
+		// wildcard across namespaces.
 		Where(sq.And{
 			sq.Expr(fmt.Sprintf("LOWER(%s.%s) = LOWER(?)", q("pipelines"), q("Name")), name),
 			sq.Eq{fmt.Sprintf("%s.%s", q("pipelines"), q("Status")): model.PipelineReady},
+			sq.Eq{fmt.Sprintf("%s.%s", q("pipelines"), q("Namespace")): namespace},
 		})
-	if len(namespace) > 0 {
-		sqlTemp = sqlTemp.Where(sq.Eq{fmt.Sprintf("%s.%s", q("pipelines"), q("Namespace")): namespace})
-	}
 	sql, args, err := sqlTemp.
 		OrderBy(
 			fmt.Sprintf("%s.%s DESC", q("pipeline_versions"), q("CreatedAtInSec")),
@@ -196,16 +197,13 @@ func (s *PipelineStore) GetPipelineByNameAndNamespace(name string, namespace str
 		From(q("pipelines")).
 		// Name is matched case-insensitively; see the comment in
 		// GetPipelineByNameAndNamespaceV1 above.
+		// The namespace predicate is always applied; see the comment in
+		// GetPipelineByNameAndNamespaceV1 above.
 		Where(sq.And{
 			sq.Expr(fmt.Sprintf("LOWER(%s.%s) = LOWER(?)", q("pipelines"), q("Name")), name),
 			sq.Eq{fmt.Sprintf("%s.%s", q("pipelines"), q("Status")): model.PipelineReady},
+			sq.Eq{fmt.Sprintf("%s.%s", q("pipelines"), q("Namespace")): namespace},
 		})
-	if len(namespace) > 0 {
-		sqlTemp = sqlTemp.
-			Where(
-				sq.Eq{fmt.Sprintf("%s.%s", q("pipelines"), q("Namespace")): namespace},
-			)
-	}
 	sql, args, err := sqlTemp.
 		OrderBy(fmt.Sprintf("%s.%s DESC", q("pipelines"), q("CreatedAtInSec"))).
 		Limit(1).
