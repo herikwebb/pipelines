@@ -17,6 +17,7 @@ from logging import WARNING
 import os
 import tempfile
 import textwrap
+from typing import Optional
 import unittest
 from unittest.mock import MagicMock
 from unittest.mock import Mock
@@ -548,6 +549,69 @@ class TestClient(parameterized.TestCase):
                 description='A test pipeline version')
 
             self.assertEqual(result, expected_result)
+
+
+class TestIsInverseProxyHost(parameterized.TestCase):
+    """Tests the host check that gates the implicit GCP token exchange."""
+
+    def setUp(self):
+        super().setUp()
+        # __init__ is bypassed so that no cluster is contacted; the method
+        # under test does not depend on any state set up by __init__.
+        self.client = client.Client.__new__(client.Client)
+
+    @parameterized.parameters([
+        'https://abc-dot-xyz.notebooks.googleusercontent.com',
+        'https://abc-dot-xyz.notebooks.googleusercontent.com/',
+        'https://xyz.googleusercontent.com',
+        'xyz.googleusercontent.com',
+        'https://XYZ.GoogleUserContent.com',
+    ])
+    def test_google_inverse_proxy_hosts_match(self, host: str):
+        self.assertTrue(self.client._is_inverse_proxy_host(host))
+
+    @parameterized.parameters([
+        'https://agoogleusercontent.com',
+        'https://evil-googleusercontent.com',
+        'https://googleusercontent.com',
+        'https://xyz.googleusercontentzcom',
+        'https://xyz.googleusercontent.com.attacker.example',
+        'https://attacker.example/xyz.googleusercontent.com',
+        'https://xyz.googleusercontent.com@attacker.example/',
+        'https://kfp.example.com',
+        'http://localhost:8080',
+        '',
+        None,
+    ])
+    def test_other_hosts_do_not_match(self, host: Optional[str]):
+        self.assertFalse(self.client._is_inverse_proxy_host(host))
+
+    @patch('kfp.client.auth.get_gcp_access_token', return_value='gcp-token')
+    def test_gcp_token_only_sent_to_google_inverse_proxy_host(
+            self, mock_get_gcp_access_token):
+        kwargs = dict(
+            client_id=None,
+            namespace='my-namespace',
+            other_client_id=None,
+            other_client_secret=None,
+            existing_token=None,
+            proxy=None,
+            ssl_ca_cert=None,
+            kube_context=None,
+            credentials=None,
+            verify_ssl=None,
+        )
+
+        config = self.client._load_config(
+            host='https://attacker.example/xyz.googleusercontent.com', **kwargs)
+        mock_get_gcp_access_token.assert_not_called()
+        self.assertNotIn('authorization', config.api_key)
+
+        config = self.client._load_config(
+            host='https://xyz.googleusercontent.com', **kwargs)
+        mock_get_gcp_access_token.assert_called_once()
+        self.assertEqual(config.api_key['authorization'], 'gcp-token')
+        self.assertEqual(config.api_key_prefix['authorization'], 'Bearer')
 
 
 class TestLoadConfigKubeConfigFallback(parameterized.TestCase):
