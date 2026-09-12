@@ -180,5 +180,18 @@
         "affected_version": "1.9.1",
         "fixed_version": "3.5.0",
         "severity": "medium"
+    },
+    {
+        "title": "decode-uri-component 0.2.2 in frontend/server vulnerable to GHSA-vcc3-ghjq-m6fr (CVE-2026-45822, npm, medium) - exponential-decoding DoS; no upgrade path because minio 8.0.7 pins query-string ^7.1.3 (CommonJS) which pins decode-uri-component ^0.2.2 and the fix 0.5.0 is ESM-only; also unreachable: minio only calls query-string stringify, never parse/decode",
+        "status": "no_fix_available",
+        "commit_hash": "967db920fe06815e780886ee99dd6db44bd1faab",
+        "detected_at_pst": "2026-09-12T06:35:00-07:00",
+        "reported_link": "",
+        "cve_id": "CVE-2026-45822",
+        "ghsa_id": "GHSA-vcc3-ghjq-m6fr",
+        "package": "npm:decode-uri-component",
+        "affected_version": "0.2.2",
+        "fixed_version": "0.5.0",
+        "severity": "medium"
     }
 ]
