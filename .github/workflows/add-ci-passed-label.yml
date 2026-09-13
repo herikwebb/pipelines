@@ -1,7 +1,8 @@
 # This workflow removes a stale 'ci-passed' label whenever a PR is updated
 # or its eligibility labels change, then adds it back only after the
-# 'CI Check' workflow both completes successfully and records that it
-# actually ran the CI polling gate for the current eligible PR head.
+# canonical 'CI Check' workflow (.github/workflows/ci-checks.yml, on its
+# pull_request_target trigger) both completes successfully and records that
+# it actually ran the CI polling gate for the current eligible PR head.
 name: Add CI Passed Label
 
 on:
@@ -41,6 +42,25 @@ jobs:
 
             if (context.eventName !== "workflow_run") {
               core.info(`No ci-passed eligibility lookup needed for ${context.eventName}.`);
+              return;
+            }
+
+            // workflow_run matches the triggering workflow by name, and a pull
+            // request can add its own workflow named "CI Check". Only trust runs
+            // of the canonical CI Check workflow file on its pull_request_target
+            // trigger; both fields come from the base repository, not the PR.
+            const triggeringWorkflowPath =
+              (context.payload.workflow && context.payload.workflow.path) ||
+              context.payload.workflow_run.path ||
+              "";
+            const triggeringEvent = context.payload.workflow_run.event;
+            if (
+              triggeringWorkflowPath !== ".github/workflows/ci-checks.yml" ||
+              triggeringEvent !== "pull_request_target"
+            ) {
+              core.info(
+                `Ignoring workflow_run from "${triggeringWorkflowPath}" (${triggeringEvent}); only the canonical CI Check workflow may add ci-passed.`
+              );
               return;
             }
 
