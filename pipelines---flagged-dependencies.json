@@ -193,5 +193,18 @@
         "affected_version": "0.2.2",
         "fixed_version": "0.5.0",
         "severity": "medium"
+    },
+    {
+        "title": "CVE-2026-25645 (GHSA-gc5v-m9x4-r6x2) pypi:requests 2.32.5 insecure temp-file reuse in extract_zipped_paths (local, CWE-377); only the python<3.10 environment-marker pin is affected and requests 2.33.0 requires Python >=3.10, so no fixed version exists for that pin while the >=3.10 pin is already 2.33.0",
+        "status": "no_fix_available",
+        "commit_hash": "b93fd252cee648a93daa10c257e9f5c10a49cace",
+        "detected_at_pst": "2026-09-14T06:18:30-07:00",
+        "reported_link": "",
+        "cve_id": "CVE-2026-25645",
+        "ghsa_id": "GHSA-gc5v-m9x4-r6x2",
+        "package": "pypi:requests",
+        "affected_version": "2.32.5",
+        "fixed_version": "2.33.0",
+        "severity": "medium"
     }
 ]
