@@ -254,5 +254,16 @@
         "issue_url": "https://github.com/herikwebb/pipelines/issues/145",
         "fix_branch": "security/fix-ci-passed-workflow-run-spoof-20260915131418-2985",
         "severity": "medium"
+    },
+    {
+        "title": "Unauthenticated SeaweedFS credential minting via the multi-user profile-controller sync webhook: pipelines-profile-controller/sync.py serves the metacontroller sync hook over plain HTTP with no authentication, trusts object.metadata.name from the request body, calls iam.create_access_key/put_user_policy for that namespace with the controller's root object-store credentials and returns the new access key and secret in the response; the pod has no Istio sidecar and no NetworkPolicy, so any tenant pod can POST to kubeflow-pipelines-profile-controller.kubeflow/sync naming a victim namespace and obtain credentials for its private-artifacts/private prefixes - fork PR open, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "e85a1321729ea96ac71c3c6f17c666879552ee7b",
+        "detected_at_pst": "2026-09-15T06:23:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/148",
+        "primary_location": "manifests/kustomize/base/installs/multi-user/pipelines-profile-controller/sync.py",
+        "issue_url": "https://github.com/herikwebb/pipelines/issues/147",
+        "fix_branch": "security/fix-profile-controller-sync-ingress-20260915132312-23205",
+        "severity": "high"
     }
 ]
