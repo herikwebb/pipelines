@@ -243,5 +243,16 @@
         "commit_hash": "967db920fe06815e780886ee99dd6db44bd1faab",
         "detected_at_pst": "2026-09-12T06:50:00-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/144"
+    },
+    {
+        "title": "CI-gate bypass via spoofed workflow_run: add-ci-passed-label.yml is triggered by workflow_run on any completed workflow *named* \"CI Check\" and applies the ci-passed label from that run's ci-check-result artifact without verifying the triggering workflow path (.github/workflows/ci-checks.yml) or event (pull_request_target), so an ok-to-test fork PR that adds its own workflow named CI Check can self-award ci-passed with a crafted artifact - issue and branch filed by the 2026-09-13 run, fork PR opened 2026-09-15, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "e85a1321729ea96ac71c3c6f17c666879552ee7b",
+        "detected_at_pst": "2026-09-13T06:25:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/146",
+        "primary_location": ".github/workflows/add-ci-passed-label.yml",
+        "issue_url": "https://github.com/herikwebb/pipelines/issues/145",
+        "fix_branch": "security/fix-ci-passed-workflow-run-spoof-20260915131418-2985",
+        "severity": "medium"
     }
 ]
