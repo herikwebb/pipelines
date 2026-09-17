@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
+import stat
+import tempfile
+import unittest
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -20,7 +24,54 @@ from absl.testing import parameterized
 from kfp.client import auth
 
 
+def _mode(path: str) -> int:
+    return stat.S_IMODE(os.stat(path).st_mode)
+
+
 class TestAuth(parameterized.TestCase):
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX file permissions only')
+    def test_write_private_json_creates_owner_only_dir_and_file(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = os.path.join(tempdir, 'kfp', 'credentials.json')
+            auth.write_private_json(path, {'client': {'refresh_token': 't'}})
+            self.assertEqual(_mode(os.path.dirname(path)), 0o700)
+            self.assertEqual(_mode(path), 0o600)
+            with open(path) as f:
+                self.assertEqual(
+                    json.load(f), {'client': {
+                        'refresh_token': 't'
+                    }})
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX file permissions only')
+    def test_write_private_json_tightens_existing_file(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = os.path.join(tempdir, 'credentials.json')
+            with open(path, 'w') as f:
+                json.dump({'stale': True}, f)
+            os.chmod(path, 0o644)
+            auth.write_private_json(path, {'fresh': True})
+            self.assertEqual(_mode(path), 0o600)
+            with open(path) as f:
+                self.assertEqual(json.load(f), {'fresh': True})
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX file permissions only')
+    @patch('kfp.client.auth.id_token_from_refresh_token',
+           lambda *args: 'id-token')
+    @patch('kfp.client.auth.get_refresh_token_from_client_id', lambda *args:
+           ('refresh-token', True))
+    def test_get_auth_token_stores_credentials_owner_only(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = os.path.join(tempdir, 'kfp', 'credentials.json')
+            with patch('kfp.client.auth.LOCAL_KFP_CREDENTIAL', path):
+                token, is_refresh_token = auth.get_auth_token(
+                    'client-id', 'other-client-id', 'other-client-secret')
+            self.assertEqual(token, 'id-token')
+            self.assertTrue(is_refresh_token)
+            self.assertEqual(_mode(path), 0o600)
+            with open(path) as f:
+                self.assertEqual(
+                    json.load(f)['client-id']['refresh_token'], 'refresh-token')
 
     def test_is_ipython_return_false(self):
         mock = MagicMock()
