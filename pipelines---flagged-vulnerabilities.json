@@ -265,5 +265,16 @@
         "issue_url": "https://github.com/herikwebb/pipelines/issues/147",
         "fix_branch": "security/fix-profile-controller-sync-ingress-20260915132312-23205",
         "severity": "high"
+    },
+    {
+        "title": "Local credential exposure in kfp.Client: auth.get_auth_token persists the IAP OAuth refresh token together with the OAuth client id and client secret to ~/.config/kfp/credentials.json (and set_user_namespace persists the context file that can carry client authentication cookies/headers) using os.makedirs and open('w') with process-default permissions (0755/0644) and no chmod, so any other local user or process able to read the home directory obtains a long-lived refresh token plus the client secret and can mint IAP ID tokens as the victim - fork PR open, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "7b2244e4338c1970bc4189ca9dd9e0e378591928",
+        "detected_at_pst": "2026-09-17T06:31:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/151",
+        "primary_location": "sdk/python/kfp/client/auth.py",
+        "issue_url": "https://github.com/herikwebb/pipelines/issues/150",
+        "fix_branch": "security/fix-sdk-credential-file-perms-20260917133525-8626",
+        "severity": "medium"
     }
 ]
