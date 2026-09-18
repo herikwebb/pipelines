@@ -1239,6 +1239,74 @@ func TestCreateOrUpdateRun_DuplicateUUID(t *testing.T) {
 	assert.Contains(t, err.Error(), "UNIQUE constraint failed: run_details.UUID")
 }
 
+func TestCreateRun_DuplicateUUIDFromSameRecurringRunIsIdempotent(t *testing.T) {
+	db, testDialect, runStore := initializeRunStore()
+	defer db.Close()
+	jobStore := NewJobStore(db, util.NewFakeTimeForEpoch(), nil, testDialect)
+	_, err := jobStore.CreateJob(&model.Job{
+		UUID:         "job-1",
+		DisplayName:  "job-1",
+		K8SName:      "job-1",
+		Namespace:    "n1",
+		Enabled:      true,
+		ExperimentId: defaultFakeExpId,
+	})
+	require.NoError(t, err)
+
+	newRun := func() *model.Run {
+		return &model.Run{
+			UUID:           "recurring-run-trigger-uuid",
+			DisplayName:    "trigger-1",
+			RecurringRunId: "job-1",
+			ExperimentId:   defaultFakeExpId,
+			K8SName:        "trigger-1",
+			StorageState:   model.StorageStateAvailable,
+			Namespace:      "n1",
+			RunDetails: model.RunDetails{
+				CreatedAtInSec: 5,
+				State:          model.RuntimeStatePending,
+			},
+		}
+	}
+	_, err = runStore.CreateRun(newRun())
+	require.NoError(t, err)
+
+	got, err := runStore.CreateRun(newRun())
+	require.NoError(t, err)
+	assert.Equal(t, "recurring-run-trigger-uuid", got.UUID)
+}
+
+func TestCreateRun_DuplicateUUIDOwnedByAnotherNamespaceIsRejected(t *testing.T) {
+	db, _, runStore := initializeRunStore()
+	defer db.Close()
+
+	// Run "1" belongs to namespace n1 and to no recurring run.
+	before, err := runStore.GetRun("1")
+	require.NoError(t, err)
+
+	collision := &model.Run{
+		UUID:           "1",
+		DisplayName:    "other-tenant-run",
+		RecurringRunId: "job-in-n2",
+		ExperimentId:   defaultFakeExpIdTwo,
+		K8SName:        "other-tenant-run",
+		StorageState:   model.StorageStateAvailable,
+		Namespace:      "n2",
+		RunDetails: model.RunDetails{
+			CreatedAtInSec: 5,
+			State:          model.RuntimeStatePending,
+		},
+	}
+	got, err := runStore.CreateRun(collision)
+	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.Contains(t, err.Error(), "Failed to store run")
+
+	after, err := runStore.GetRun("1")
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}
+
 func TestUpdateRun_RunNotExist(t *testing.T) {
 	db, _, runStore := initializeRunStore()
 	defer db.Close()

@@ -995,6 +995,12 @@ func (s *RunStore) CreateRun(r *model.Run) (*model.Run, error) {
 			if getErr != nil {
 				return nil, util.NewInternalServerError(err, "Failed to fetch existing run %v after duplicate key conflict", r.UUID)
 			}
+			// Only a run persisted for the same recurring run in the same namespace is the
+			// concurrent-trigger duplicate. Any other collision is a conflict, not a run
+			// this caller is entitled to see.
+			if existingRun.RecurringRunId != r.RecurringRunId || existingRun.Namespace != r.Namespace {
+				return nil, util.NewInternalServerError(err, "Failed to store run %v to table", r.DisplayName)
+			}
 			return existingRun, nil
 		}
 		return nil, util.NewInternalServerError(err, "Failed to store run %v to table", r.DisplayName)

@@ -677,6 +677,31 @@ func TestCreateRun_MultiuserRecurringRunNamespaceBoundToOwner(t *testing.T) {
 	assert.Contains(t, err.Error(), "A recurring run can only create runs in its own namespace")
 }
 
+func TestCreateRun_IgnoresClientSuppliedRunId(t *testing.T) {
+	clients, manager, _ := initWithExperiment(t)
+	defer clients.Close()
+	server := createRunServer(manager)
+	pipelineSpecStruct := &structpb.Struct{}
+	require.NoError(t, yaml.Unmarshal([]byte(v2SpecHelloWorld), pipelineSpecStruct))
+
+	got, err := server.CreateRun(context.Background(), &apiv2beta1.CreateRunRequest{
+		Run: &apiv2beta1.Run{
+			RunId:          "caller-chosen-run-id",
+			DisplayName:    "run1",
+			ExperimentId:   DefaultFakeUUID,
+			PipelineSource: &apiv2beta1.Run_PipelineSpec{PipelineSpec: pipelineSpecStruct},
+			RuntimeConfig: &apiv2beta1.RuntimeConfig{
+				Parameters: map[string]*structpb.Value{"param1": structpb.NewStringValue("world")},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, DefaultFakeUUID, got.RunId, "run ID must be assigned by the server")
+	_, err = manager.GetRun("caller-chosen-run-id")
+	require.Error(t, err)
+	assert.True(t, util.IsUserErrorCodeMatch(err, codes.NotFound))
+}
+
 func TestValidateRecurringRunNamespace_MultiuserLegacyOwner(t *testing.T) {
 	viper.Set(common.MultiUserMode, "true")
 	t.Cleanup(func() { viper.Set(common.MultiUserMode, "false") })
