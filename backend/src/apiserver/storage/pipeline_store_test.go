@@ -590,6 +590,37 @@ func TestGetPipelineByNameAndNamespace_NotFound(t *testing.T) {
 		"Failed to get pipeline by name and namespace")
 }
 
+func TestGetPipelineByNameAndNamespace_EmptyNamespaceIsNotWildcard(t *testing.T) {
+	db, testDialect := NewFakeDBOrFatal()
+	defer db.Close()
+	pipelineStore := NewPipelineStore(db, util.NewFakeTimeForEpoch(), util.NewFakeUUIDGeneratorOrFatal(DefaultFakePipelineId, nil), testDialect)
+	p := createPipelineV1("pipeline1")
+	p.Namespace = "ns1"
+	_, err := pipelineStore.CreatePipeline(p)
+	assert.Nil(t, err)
+	pv := createPipelineVersion(DefaultFakePipelineId, "pipeline1", "", "", "", "")
+	_, err = pipelineStore.CreatePipelineVersion(pv)
+	assert.Nil(t, err)
+
+	// A lookup without a namespace must not return a pipeline that belongs to one.
+	_, err = pipelineStore.GetPipelineByNameAndNamespace("pipeline1", "")
+	assert.NotNil(t, err)
+	assert.Equal(t, codes.NotFound, err.(*util.UserError).ExternalStatusCode())
+	_, _, err = pipelineStore.GetPipelineByNameAndNamespaceV1("pipeline1", "")
+	assert.NotNil(t, err)
+	assert.Equal(t, codes.NotFound, err.(*util.UserError).ExternalStatusCode())
+
+	// A shared pipeline (no namespace) with the same name is still found.
+	pipelineStore.SetUUIDGenerator(util.NewFakeUUIDGeneratorOrFatal("123e4567-e89b-12d3-a456-426655441000", nil))
+	shared := createPipelineV1("pipeline1")
+	shared.Namespace = ""
+	resShared, err := pipelineStore.CreatePipeline(shared)
+	assert.Nil(t, err)
+	pipeline, err := pipelineStore.GetPipelineByNameAndNamespace("pipeline1", "")
+	assert.Nil(t, err)
+	assert.Equal(t, resShared.UUID, pipeline.UUID)
+}
+
 func TestGetPipelineByNameAndNamespaceV1(t *testing.T) {
 	db, testDialect := NewFakeDBOrFatal()
 	defer db.Close()
