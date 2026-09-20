@@ -617,10 +617,12 @@ describe('workflow-helper', () => {
               artifactRepository: {
                 archiveLogs: true,
                 s3: {
+                  accessKeySecret: { key: 'accessKey', name: 'accessKeyName' },
                   bucket,
                   endpoint: 'seaweedfs.kubeflow',
                   insecure: true,
                   key: 'unused-repository-key',
+                  secretKeySecret: { key: 'secretKey', name: 'secretKeyName' },
                 },
               },
             },
@@ -724,6 +726,9 @@ describe('workflow-helper', () => {
           workflowWithLogKey('bucket', logKey) as any,
         );
         vi.mocked(getServerNamespace).mockReturnValue('kubeflow');
+        // A server-namespace run reads the credential Secret the workflow
+        // references, so the fixture must reference one for the client to be
+        // built from it rather than from ambient AWS credential providers.
         vi.mocked(getK8sSecret).mockResolvedValue('someSecret');
         const objStream = new PassThrough();
         MinioClient.prototype.getObject = vi.fn().mockResolvedValueOnce(objStream) as any;
@@ -735,6 +740,17 @@ describe('workflow-helper', () => {
           'kubeflow',
         );
 
+        expect(getK8sSecret).toHaveBeenCalledWith('accessKeyName', 'accessKey', 'kubeflow');
+        expect(minioHelper.createMinioClient).toHaveBeenCalledExactlyOnceWith(
+          {
+            accessKey: 'someSecret',
+            endPoint: 'seaweedfs.kubeflow',
+            port: 80,
+            secretKey: 'someSecret',
+            useSSL: false,
+          },
+          's3',
+        );
         expect(await readStreamText(stream)).toBe('some fake logs.');
         expect(MinioClient.prototype.getObject).toHaveBeenCalledWith('bucket', logKey);
       });
