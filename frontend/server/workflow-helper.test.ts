@@ -247,7 +247,12 @@ describe('workflow-helper', () => {
           nodes: {
             'workflow-name-abc': {
               outputs: {
-                artifacts: [{ name: 'main-logs', s3: { key: 'prefix/main.log' } }],
+                artifacts: [
+                  {
+                    name: 'main-logs',
+                    s3: { key: 'private-artifacts/my-user-namespace/main.log' },
+                  },
+                ],
               },
             },
           },
@@ -433,7 +438,10 @@ describe('workflow-helper', () => {
           },
           's3',
         );
-        expect(MinioClient.prototype.getObject).toHaveBeenCalledWith('bucket', 'prefix/main.log');
+        expect(MinioClient.prototype.getObject).toHaveBeenCalledWith(
+          'bucket',
+          'private-artifacts/my-user-namespace/main.log',
+        );
         expect(await readStreamText(stream)).toBe('archived logs');
       },
     );
@@ -533,7 +541,7 @@ describe('workflow-helper', () => {
                 bucket: 'bucket',
                 endpoint: 'seaweedfs.kubeflow',
                 insecure: true,
-                key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/some-artifact.csv',
+                key: 'private-artifacts/my-user-namespace/workflow-name/workflow-name-system-container-impl-abc/some-artifact.csv',
                 secretKeySecret: { key: 'secretKey', name: 'secretKeyName' },
               },
             },
@@ -545,7 +553,7 @@ describe('workflow-helper', () => {
                   {
                     name: 'main-logs',
                     s3: {
-                      key: 'prefix/workflow-name/workflow-name-system-container-impl-abc/main.log',
+                      key: 'private-artifacts/my-user-namespace/workflow-name/workflow-name-system-container-impl-abc/main.log',
                     },
                   },
                 ],
@@ -598,6 +606,137 @@ describe('workflow-helper', () => {
         port: 80,
         secretKey: 'server-secret-key',
         useSSL: false,
+      });
+    });
+
+    describe('workflow status log key ownership for user-namespace runs (security)', () => {
+      function workflowWithLogKey(bucket: unknown, logKey: unknown) {
+        return {
+          status: {
+            artifactRepositoryRef: {
+              artifactRepository: {
+                archiveLogs: true,
+                s3: {
+                  bucket,
+                  endpoint: 'seaweedfs.kubeflow',
+                  insecure: true,
+                  key: 'unused-repository-key',
+                },
+              },
+            },
+            nodes: {
+              'workflow-name-abc': {
+                outputs: {
+                  artifacts: [{ name: 'main-logs', s3: { key: logKey } }],
+                },
+              },
+            },
+          },
+        };
+      }
+
+      it.each([
+        [
+          'another namespace',
+          'bucket',
+          'private-artifacts/victim-namespace/workflow-name/2024/07/09/workflow-name-system-container-impl-abc/main.log',
+        ],
+        [
+          'no namespace prefix',
+          'bucket',
+          'workflow-name/workflow-name-system-container-impl-abc/main.log',
+        ],
+        [
+          'a traversal segment',
+          'bucket',
+          'private-artifacts/my-user-namespace/../victim-namespace/main.log',
+        ],
+        [
+          'an empty segment',
+          'bucket',
+          'private-artifacts/my-user-namespace//../victim-namespace/main.log',
+        ],
+        [
+          'a bucket carrying key segments',
+          'bucket/private-artifacts/my-user-namespace',
+          'private-artifacts/victim-namespace/main.log',
+        ],
+        [
+          'a non-string key',
+          'bucket',
+          { toString: () => 'private-artifacts/my-user-namespace/main.log' },
+        ],
+        [
+          'a query separator',
+          'bucket',
+          'private-artifacts/my-user-namespace/ok?private-artifacts/victim-namespace/main.log',
+        ],
+      ])(
+        'rejects a workflow status log key with %s before any object-store client is built',
+        async (_case, bucket, logKey) => {
+          vi.mocked(getArgoWorkflow).mockResolvedValueOnce(
+            workflowWithLogKey(bucket, logKey) as any,
+          );
+          vi.mocked(getServerNamespace).mockReturnValue('kubeflow');
+          vi.stubEnv('MINIO_ACCESS_KEY', 'server-access-key');
+          vi.stubEnv('MINIO_SECRET_KEY', 'server-secret-key');
+
+          await expect(
+            getPodLogsStreamFromWorkflow(
+              'workflow-name-system-container-impl-abc',
+              '2024-07-09',
+              'my-user-namespace',
+            ),
+          ).rejects.toThrow('Unable to retrieve logs from artifact store');
+
+          expect(getK8sSecret).not.toHaveBeenCalled();
+          expect(minioHelper.createMinioClient).not.toHaveBeenCalled();
+          expect(MinioClient).not.toHaveBeenCalled();
+        },
+      );
+
+      it('serves a workflow status log key under the run namespace prefix', async () => {
+        const logKey =
+          'private-artifacts/my-user-namespace/workflow-name/2024/07/09/workflow-name-system-container-impl-abc/main.log';
+        vi.mocked(getArgoWorkflow).mockResolvedValueOnce(
+          workflowWithLogKey('bucket', logKey) as any,
+        );
+        vi.mocked(getServerNamespace).mockReturnValue('kubeflow');
+        vi.stubEnv('MINIO_ACCESS_KEY', 'server-access-key');
+        vi.stubEnv('MINIO_SECRET_KEY', 'server-secret-key');
+        const objStream = new PassThrough();
+        MinioClient.prototype.getObject = vi.fn().mockResolvedValueOnce(objStream) as any;
+        objStream.end('some fake logs.');
+
+        const stream = await getPodLogsStreamFromWorkflow(
+          'workflow-name-system-container-impl-abc',
+          '2024-07-09',
+          'my-user-namespace',
+        );
+
+        expect(await readStreamText(stream)).toBe('some fake logs.');
+        expect(MinioClient.prototype.getObject).toHaveBeenCalledWith('bucket', logKey);
+      });
+
+      it('does not apply the namespace prefix rule to a run in the server namespace', async () => {
+        const logKey = 'prefix/workflow-name/workflow-name-system-container-impl-abc/main.log';
+        vi.mocked(getArgoWorkflow).mockResolvedValueOnce(
+          workflowWithLogKey('bucket', logKey) as any,
+        );
+        vi.mocked(getServerNamespace).mockReturnValue('kubeflow');
+        vi.mocked(getK8sSecret).mockResolvedValue('someSecret');
+        const objStream = new PassThrough();
+        MinioClient.prototype.getObject = vi.fn().mockResolvedValueOnce(objStream) as any;
+        objStream.end('some fake logs.');
+
+        const stream = await getPodLogsStreamFromWorkflow(
+          'workflow-name-system-container-impl-abc',
+          '2024-07-09',
+          'kubeflow',
+        );
+
+        expect(await readStreamText(stream)).toBe('some fake logs.');
+        expect(MinioClient.prototype.getObject).toHaveBeenCalledWith('bucket', logKey);
       });
     });
 
