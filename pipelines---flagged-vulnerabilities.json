@@ -276,5 +276,16 @@
         "issue_url": "https://github.com/herikwebb/pipelines/issues/150",
         "fix_branch": "security/fix-sdk-credential-file-perms-20260917133525-8626",
         "severity": "medium"
+    },
+    {
+        "title": "Cross-tenant object-store read via tenant-authored Workflow status in the ml-pipeline-ui pod-log fallback: getPodLogsMinioRequestConfigfromWorkflow takes the bucket (status.artifactRepositoryRef.artifactRepository.s3.bucket) and the main-logs object key (status.nodes[<pod>].outputs.artifacts[].s3.key) verbatim from the Argo Workflow status, which a tenant with the edit role can write because the Workflow CRD has no status subresource, and for a user-namespace run fetches that object with the frontend's shared MINIO_ACCESS_KEY/MINIO_SECRET_KEY, so GET /k8s/pod/logs?podname=<crafted-workflow>&podnamespace=<own-ns> returns any object those credentials reach (other namespaces' private-artifacts/<ns>/ artifacts and archived logs); the endpoint allow-list from the earlier SSRF fix does not apply because the attacker names the trusted store - fork PR open, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "791a19c8b38760013238d64ab0ff83e44855cfb3",
+        "detected_at_pst": "2026-09-20T06:33:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/issues/152",
+        "primary_location": "frontend/server/workflow-helper.ts",
+        "issue_url": "https://github.com/herikwebb/pipelines/issues/152",
+        "fix_branch": "security/fix-pod-log-key-namespace-scope-20260920133026-18971",
+        "severity": "high"
     }
 ]
