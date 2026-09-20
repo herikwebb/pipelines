@@ -282,7 +282,7 @@
         "status": "active",
         "commit_hash": "791a19c8b38760013238d64ab0ff83e44855cfb3",
         "detected_at_pst": "2026-09-20T06:33:00-07:00",
-        "reported_link": "https://github.com/herikwebb/pipelines/issues/152",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/153",
         "primary_location": "frontend/server/workflow-helper.ts",
         "issue_url": "https://github.com/herikwebb/pipelines/issues/152",
         "fix_branch": "security/fix-pod-log-key-namespace-scope-20260920133026-18971",
