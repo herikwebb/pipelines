@@ -287,5 +287,13 @@
         "issue_url": "https://github.com/herikwebb/pipelines/issues/152",
         "fix_branch": "security/fix-pod-log-key-namespace-scope-20260920133026-18971",
         "severity": "high"
+    },
+    {
+        "title": "Unbounded in-memory buffering in the ml-pipeline-ui GCS artifact handler: getGCSArtifactHandler lists every object under the caller-chosen key prefix and readGCSObject/Buffer.concat holds all matches in memory for both the download route and the default text preview (MinIO/S3 branches stream), so any namespace-authorized tenant (or unauthenticated client in standalone) with large objects under a readable prefix can OOM the shared UI pod when GCS is the artifact backend - fork PR open, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "62516d8c525f146b754cb515cf441dd0290ad841",
+        "detected_at_pst": "2026-09-20T18:40:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/155",
+        "primary_location": "frontend/server/handlers/artifacts.ts"
     }
 ]
