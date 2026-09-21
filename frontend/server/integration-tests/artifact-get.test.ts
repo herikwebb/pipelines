@@ -2736,6 +2736,73 @@ s3:
       expect(response.headers['x-content-type-options']).toBe('nosniff');
     });
 
+    it('streams wildcard gcs matches as trimmed text joined by newlines', async () => {
+      const mockedGetGCSClient: Mock = getGCSClient as any;
+      const mockedListGCSObjectNames: Mock = listGCSObjectNames as any;
+      const mockedDownloadGCSObjectStream: Mock = downloadGCSObjectStream as any;
+      const client = { request: vi.fn() };
+      // Trailing whitespace is split across chunks so that the trim has to be
+      // decided while streaming rather than on a fully buffered object.
+      const first = new PassThrough();
+      first.write('  hello ');
+      first.write(' \n');
+      first.end();
+      const second = new PassThrough();
+      second.end('\n\tworld\t');
+      mockedGetGCSClient.mockResolvedValueOnce(client);
+      mockedListGCSObjectNames.mockResolvedValueOnce(['hello/a.txt', 'hello/b.txt', 'hello/c.log']);
+      mockedDownloadGCSObjectStream.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+      const configs = loadConfigs(argv, {});
+      app = new UIServer(configs);
+
+      await requests(app.app)
+        .get('/artifacts/get?source=gcs&bucket=ml-pipeline&key=hello%2F*.txt')
+        .expect('Content-Type', /text\/plain/)
+        .expect(200, 'hello\nworld\n');
+      expect(mockedDownloadGCSObjectStream).toHaveBeenCalledTimes(2);
+      expect(mockedDownloadGCSObjectStream).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ bucket: 'ml-pipeline', client, objectName: 'hello/a.txt' }),
+      );
+      expect(mockedDownloadGCSObjectStream).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ bucket: 'ml-pipeline', client, objectName: 'hello/b.txt' }),
+      );
+    });
+
+    it('streams multiple path-based gcs downloads byte-for-byte in order', async () => {
+      const mockedGetGCSClient: Mock = getGCSClient as any;
+      const mockedListGCSObjectNames: Mock = listGCSObjectNames as any;
+      const mockedDownloadGCSObjectStream: Mock = downloadGCSObjectStream as any;
+      const client = { request: vi.fn() };
+      const first = new PassThrough();
+      const firstContent = Buffer.from([0x20, 0x00, 0xff, 0x0a]);
+      first.end(firstContent);
+      const second = new PassThrough();
+      const secondContent = Buffer.from([0x09, 0xfe, 0x00, 0x20]);
+      second.end(secondContent);
+      mockedGetGCSClient.mockResolvedValueOnce(client);
+      mockedListGCSObjectNames.mockResolvedValueOnce(['hello/part-0', 'hello/part-1']);
+      mockedDownloadGCSObjectStream.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+      const configs = loadConfigs(argv, {});
+      app = new UIServer(configs);
+
+      const response = await requests(app.app)
+        .get('/artifacts/gcs/ml-pipeline/hello/part-*')
+        .buffer(true)
+        .parse((incoming, callback) => {
+          const chunks: Buffer[] = [];
+          incoming.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+          incoming.on('end', () => callback(null, Buffer.concat(chunks)));
+          incoming.on('error', callback);
+        })
+        .expect(200);
+
+      expect(response.body).toEqual(Buffer.concat([firstContent, secondContent]));
+      expect(response.headers['content-type']).toBeUndefined();
+      expect(response.headers['x-content-type-options']).toBe('nosniff');
+    });
+
     it('responds with a partial gcs artifact if peek=5 is set', async () => {
       const artifactContent = 'hello world';
       const mockedGetGCSClient: Mock = getGCSClient as any;

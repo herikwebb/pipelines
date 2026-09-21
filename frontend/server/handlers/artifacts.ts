@@ -36,8 +36,9 @@ import { parseGoBoolean } from '../helpers/provider-options.js';
 import * as tar from 'tar-stream';
 import * as zlib from 'zlib';
 import type { IncomingMessage } from 'http';
-import { Readable } from 'stream';
+import { Readable, Transform, TransformCallback } from 'stream';
 import { pipeline as pipelinePromise } from 'stream/promises';
+import { StringDecoder } from 'string_decoder';
 import * as serverInfo from '../helpers/server-info.js';
 import { Handler, Request, Response, NextFunction } from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
@@ -1525,7 +1526,76 @@ async function parseGCSProviderInfo(
   }
 }
 
-async function readGCSObject(
+// Longest run of whitespace held back while deciding whether it is trailing.
+// A run longer than this is emitted as-is so an object made of whitespace
+// cannot be accumulated in memory.
+const TRIMMED_TEXT_MAX_PENDING_WHITESPACE = 64 * 1024;
+const WHITESPACE = /\s/;
+
+/**
+ * Transform that emits the UTF-8 text of a stream with leading and trailing
+ * whitespace removed, equivalent to `buffer.toString().trim()`, without ever
+ * holding the whole object in memory.
+ */
+export class TrimmedTextStream extends Transform {
+  private readonly decoder = new StringDecoder('utf8');
+  private started = false;
+  private pendingWhitespace = '';
+
+  _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
+    const output = this.consume(this.decoder.write(chunk));
+    if (output) {
+      this.push(output);
+    }
+    callback();
+  }
+
+  _flush(callback: TransformCallback): void {
+    const output = this.consume(this.decoder.end());
+    if (output) {
+      this.push(output);
+    }
+    // Whatever whitespace is still pending at the end is trailing: drop it.
+    callback();
+  }
+
+  private consume(text: string): string {
+    let start = 0;
+    if (!this.started) {
+      while (start < text.length && WHITESPACE.test(text[start])) {
+        start++;
+      }
+      if (start === text.length) {
+        return '';
+      }
+      this.started = true;
+    }
+    let end = text.length;
+    while (end > start && WHITESPACE.test(text[end - 1])) {
+      end--;
+    }
+    const body = text.slice(start, end);
+    let output = '';
+    if (body) {
+      output = this.pendingWhitespace + body;
+      this.pendingWhitespace = text.slice(end);
+    } else {
+      // Only whitespace so far: keep holding it until non-whitespace follows.
+      this.pendingWhitespace += text;
+    }
+    if (this.pendingWhitespace.length > TRIMMED_TEXT_MAX_PENDING_WHITESPACE) {
+      output += this.pendingWhitespace;
+      this.pendingWhitespace = '';
+    }
+    return output;
+  }
+}
+
+/**
+ * Streams a GCS object into the response without ending it, so that several
+ * objects can be concatenated without buffering any of them in memory.
+ */
+async function streamGCSObject(
   bucket: string,
   objectName: string,
   options: {
@@ -1534,13 +1604,15 @@ async function readGCSObject(
     credentials?: CredentialBody;
     universeDomain?: string;
   },
-): Promise<Buffer> {
+  res: Response,
+  transform?: Transform,
+): Promise<void> {
   const stream = await downloadGCSObjectStream({ bucket, objectName, ...options });
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  if (transform) {
+    await pipelinePromise(stream, transform, res, { end: false });
+    return;
   }
-  return Buffer.concat(chunks);
+  await pipelinePromise(stream, res, { end: false });
 }
 
 function getGCSArtifactHandler(
@@ -1648,24 +1720,27 @@ function getGCSArtifactHandler(
         return;
       }
 
+      // Matches are streamed to the response one after another. Buffering
+      // them would let a caller exhaust the server's memory with large or
+      // numerous objects, so nothing beyond a single chunk is held at a time.
       if (isDownloadRoute) {
-        const contents: Buffer[] = [];
-        for (const fileName of matchingFiles) {
-          contents.push(await readGCSObject(bucket, fileName, accessOptions));
-        }
         // Keep path-based downloads untyped and byte-preserving. Artifact
         // bytes are untrusted and may not be text; attachment + nosniff
         // provides the response hardening.
-        res.end(Buffer.concat(contents));
+        for (const fileName of matchingFiles) {
+          await streamGCSObject(bucket, fileName, accessOptions, res);
+        }
+        res.end();
         return;
       }
 
       // Preview wildcard matches are intentionally joined as trimmed text.
-      let contents = '';
+      res.type('text/plain');
       for (const fileName of matchingFiles) {
-        contents += (await readGCSObject(bucket, fileName, accessOptions)).toString().trim() + '\n';
+        await streamGCSObject(bucket, fileName, accessOptions, res, new TrimmedTextStream());
+        res.write('\n');
       }
-      res.type('text/plain').send(contents);
+      res.end();
     } catch (err) {
       sendArtifactError(res, 500, 'Failed to download GCS file(s). Error: ' + err);
     }
