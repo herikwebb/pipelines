@@ -295,5 +295,17 @@
         "detected_at_pst": "2026-09-20T18:40:00-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/155",
         "primary_location": "frontend/server/handlers/artifacts.ts"
+    },
+    {
+        "title": "Cross-tenant object-store read via tenant-authored Workflow status in the API server: ResolveArtifactPath (runs/{run}/nodes/{node}/artifacts/{name}:read) and readRunLogFromArchive (v1alpha1 run log archive fallback, enabled by default) take the object key verbatim from status.nodes[*].outputs.artifacts[*].s3.key of the run's stored workflow runtime manifest and fetch it with the API server's own shared object-store credentials, so a multi-user tenant with the edit role (workflows '*', readLog/readArtifact) points a main-logs/artifact key at another namespace's private-artifacts/<ns>/ object or a stored pipeline spec and reads it through their own run; API-server twin of the frontend pod-log fallback issue #152 - fork PR open, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "c6031eb1615f6b2cba251f640c61e30837ac9f40",
+        "detected_at_pst": "2026-09-22T06:26:46-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/157",
+        "primary_location": "backend/src/apiserver/resource/resource_manager.go",
+        "tracking_issue": "https://github.com/herikwebb/pipelines/issues/156",
+        "fix_branch": "security/fix-run-artifact-key-namespace-scope-20260922132028-1282",
+        "upstream_compare_url": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-run-artifact-key-namespace-scope-20260922132028-1282?expand=1",
+        "severity": "high"
     }
 ]
