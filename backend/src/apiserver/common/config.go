@@ -64,6 +64,12 @@ const (
 	PluginMaxTotalPayloadBytes              string = "PLUGIN_MAX_TOTAL_PAYLOAD_BYTES"
 	PluginMaxNestingDepth                   string = "PLUGIN_MAX_NESTING_DEPTH"
 	WorkflowGCGracePeriodSeconds            string = "WORKFLOW_GC_GRACE_PERIOD_SECONDS"
+	// ArtifactNamespaceKeyPrefix is the leading object-key segment under which
+	// each namespace's run artifacts and archived logs live in multi-user mode
+	// ("<prefix>/<namespace>/..."). It mirrors the frontend's
+	// ARTIFACT_NAMESPACE_KEY_PREFIX setting and the default Argo keyFormat.
+	ArtifactNamespaceKeyPrefix        string = "ARTIFACT_NAMESPACE_KEY_PREFIX"
+	DefaultArtifactNamespaceKeyPrefix string = "private-artifacts"
 
 	// Run garbage collection configuration keys.
 	// Disabled by default (zero values).
@@ -211,6 +217,16 @@ func GetMetadataServiceName() string {
 
 func GetClusterDomain() string {
 	return GetStringConfigWithDefault(ClusterDomain, DefaultClusterDomain)
+}
+
+// GetArtifactNamespaceKeyPrefix returns the object-key prefix that scopes a
+// namespace's artifacts in multi-user mode, without surrounding slashes.
+func GetArtifactNamespaceKeyPrefix() string {
+	prefix := strings.Trim(strings.TrimSpace(GetStringConfigWithDefault(ArtifactNamespaceKeyPrefix, DefaultArtifactNamespaceKeyPrefix)), "/")
+	if prefix == "" {
+		return DefaultArtifactNamespaceKeyPrefix
+	}
+	return prefix
 }
 
 func GetBoolFromStringWithDefault(value string, defaultValue bool) bool {

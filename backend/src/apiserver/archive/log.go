@@ -245,7 +245,11 @@ type LogArchive struct {
 	logPathPrefix string
 }
 
-const archivedLogArtifactName = "main-logs"
+// ArchivedLogArtifactName is the Argo output artifact that carries a node's
+// archived container log when archiveLogs is enabled.
+const ArchivedLogArtifactName = "main-logs"
+
+const archivedLogArtifactName = ArchivedLogArtifactName
 
 func NewLogArchive(logPathPrefix, logFileName string) *LogArchive {
 	return &LogArchive{

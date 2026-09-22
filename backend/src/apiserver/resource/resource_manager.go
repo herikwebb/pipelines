@@ -1608,7 +1608,7 @@ func (r *ResourceManager) ReadLog(ctx context.Context, runId string, nodeId stri
 	}
 	err = r.readRunLogFromPod(ctx, runId, namespace, nodeId, follow, dst)
 	if err != nil && r.logArchive != nil {
-		err = r.readRunLogFromArchive(ctx, string(run.WorkflowRuntimeManifest), nodeId, dst)
+		err = r.readRunLogFromArchive(ctx, run, nodeId, dst)
 		if err != nil {
 			return util.NewBadRequestError(err, "Failed to read logs for run %v", runId)
 		}
@@ -1659,7 +1659,8 @@ func (r *ResourceManager) readRunLogFromPod(ctx context.Context, runID string, n
 }
 
 // Fetches execution logs from a archived pod logs.
-func (r *ResourceManager) readRunLogFromArchive(ctx context.Context, workflowManifest string, nodeID string, dst io.Writer) error {
+func (r *ResourceManager) readRunLogFromArchive(ctx context.Context, run *model.Run, nodeID string, dst io.Writer) error {
+	workflowManifest := string(run.WorkflowRuntimeManifest)
 	if workflowManifest == "" {
 		return util.NewInternalServerError(util.NewInvalidInputError("Runtime workflow manifest cannot empty"), "Failed to read logs from archive %v due to empty runtime workflow manifest", nodeID)
 	}
@@ -1672,6 +1673,13 @@ func (r *ResourceManager) readRunLogFromArchive(ctx context.Context, workflowMan
 	logPath, err := r.logArchive.GetLogObjectKey(execSpec, nodeID)
 	if err != nil {
 		return util.NewInternalServerError(err, "Failed to read logs from archive %v", nodeID)
+	}
+	// The archived log key may come straight from the workflow status, which
+	// the run namespace's users can author; keep it inside their own subtree.
+	if execSpec.ExecutionStatus().FindObjectStoreArtifactKeyOrEmpty(nodeID, archive.ArchivedLogArtifactName) != "" {
+		if err := r.validateArtifactKeyOwnedByRun(run, logPath); err != nil {
+			return err
+		}
 	}
 
 	logReader, err := r.objectStore.GetFileReader(ctx, logPath)
@@ -3335,7 +3343,68 @@ func (r *ResourceManager) ResolveArtifactPath(runID string, nodeID string, artif
 		return "", util.NewResourceNotFoundError(
 			"artifact", common.CreateArtifactPath(runID, nodeID, artifactName))
 	}
+	if err := r.validateArtifactKeyOwnedByRun(run, artifactPath); err != nil {
+		return "", err
+	}
 	return artifactPath, nil
+}
+
+// validateArtifactKeyOwnedByRun refuses an object key taken from a run's
+// workflow status unless it sits under the run namespace's own key prefix.
+//
+// The runtime manifest is a copy of the Argo Workflow reported by the
+// persistence agent. The Workflow CRD has no status subresource, so anyone
+// allowed to write Workflows in the run namespace can author the artifact
+// keys it carries, while the object is then fetched with the API server's own
+// shared object-store credentials. Without this check a tenant could name any
+// key in the bucket (another namespace's artifacts, archived logs or pipeline
+// specs) and read it through their own run. Single-user deployments share one
+// trust domain and are left unchanged.
+func (r *ResourceManager) validateArtifactKeyOwnedByRun(run *model.Run, key string) error {
+	if !common.IsMultiUserMode() {
+		return nil
+	}
+	namespace := run.Namespace
+	if r.IsEmptyNamespace(namespace) {
+		resolved, err := r.GetNamespaceFromExperimentId(run.ExperimentId)
+		if err != nil {
+			return util.Wrapf(err, "Failed to resolve the namespace of run %v", run.UUID)
+		}
+		namespace = resolved
+	}
+	if r.IsEmptyNamespace(namespace) {
+		return util.NewPermissionDeniedError(
+			fmt.Errorf("run %v has no namespace", run.UUID),
+			"Refusing to read object %q for run %v: the run namespace is unknown", key, run.UUID)
+	}
+	if !artifactKeyOwnedByNamespace(key, common.GetArtifactNamespaceKeyPrefix(), namespace) {
+		return util.NewPermissionDeniedError(
+			fmt.Errorf("object key %q is outside namespace %v", key, namespace),
+			"Refusing to read object %q for run %v: it is not owned by namespace %v", key, run.UUID, namespace)
+	}
+	return nil
+}
+
+// artifactKeyOwnedByNamespace reports whether key is of the form
+// "<prefix>/<namespace>/<rest>" with no empty, "." or ".." segments, so that
+// neither traversal nor a bare prefix can escape the namespace's subtree.
+func artifactKeyOwnedByNamespace(key, prefix, namespace string) bool {
+	segments := strings.Split(key, "/")
+	prefixSegments := strings.Split(prefix, "/")
+	if len(segments) < len(prefixSegments)+2 {
+		return false
+	}
+	for _, segment := range segments {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	for i, prefixSegment := range prefixSegments {
+		if segments[i] != prefixSegment {
+			return false
+		}
+	}
+	return segments[len(prefixSegments)] == namespace
 }
 
 // ReadArtifact streams artifact content from object storage to the provided writer.

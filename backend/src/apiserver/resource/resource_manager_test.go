@@ -320,7 +320,7 @@ func TestReadRunLogFromArchiveStreamsObjectStoreFile(t *testing.T) {
 	}
 
 	var dst bytes.Buffer
-	err = manager.readRunLogFromArchive(context.Background(), testWorkflow.ToStringForStore(), "node-id", &dst)
+	err = manager.readRunLogFromArchive(context.Background(), &model.Run{RunDetails: model.RunDetails{WorkflowRuntimeManifest: model.LargeText(testWorkflow.ToStringForStore())}}, "node-id", &dst)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{logPath}, objectStore.getFileReaderPaths)
@@ -363,7 +363,7 @@ func TestReadRunLogFromArchivePropagatesCanceledContext(t *testing.T) {
 	cancel()
 
 	var dst bytes.Buffer
-	err = manager.readRunLogFromArchive(ctx, testWorkflow.ToStringForStore(), "node-id", &dst)
+	err = manager.readRunLogFromArchive(ctx, &model.Run{RunDetails: model.RunDetails{WorkflowRuntimeManifest: model.LargeText(testWorkflow.ToStringForStore())}}, "node-id", &dst)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), context.Canceled.Error())
@@ -9284,4 +9284,121 @@ func TestCreateRun_ServiceAccountSAR_EmbeddedSA_Unauthorized(t *testing.T) {
 	_, err := manager.CreateRun(multiUserContext(), apiRun)
 	require.NotNil(t, err)
 	assert.Contains(t, err.Error(), "not allowed")
+}
+
+func TestArtifactKeyOwnedByNamespace(t *testing.T) {
+	tests := []struct {
+		name      string
+		key       string
+		prefix    string
+		namespace string
+		want      bool
+	}{
+		{"own namespace", "private-artifacts/ns1/wf/2026/01/01/pod/artifact", "private-artifacts", "ns1", true},
+		{"other namespace", "private-artifacts/ns2/wf/2026/01/01/pod/artifact", "private-artifacts", "ns1", false},
+		{"pipeline spec", "pipelines/pipeline-id", "private-artifacts", "ns1", false},
+		{"bare prefix and namespace", "private-artifacts/ns1", "private-artifacts", "ns1", false},
+		{"namespace prefix match only", "private-artifacts/ns10/artifact", "private-artifacts", "ns1", false},
+		{"traversal", "private-artifacts/ns1/../ns2/artifact", "private-artifacts", "ns1", false},
+		{"empty segment", "private-artifacts//ns1/artifact", "private-artifacts", "ns1", false},
+		{"leading slash", "/private-artifacts/ns1/artifact", "private-artifacts", "ns1", false},
+		{"multi segment prefix", "kfp/private-artifacts/ns1/artifact", "kfp/private-artifacts", "ns1", true},
+		{"multi segment prefix mismatch", "kfp/other/ns1/artifact", "kfp/private-artifacts", "ns1", false},
+		{"empty key", "", "private-artifacts", "ns1", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, artifactKeyOwnedByNamespace(tc.key, tc.prefix, tc.namespace))
+		})
+	}
+}
+
+func archivedLogWorkflowManifest(t *testing.T, key string) model.LargeText {
+	t.Helper()
+	workflow := util.NewWorkflow(&v1alpha1.Workflow{
+		ObjectMeta: v1.ObjectMeta{Name: "workflow-name", Namespace: "ns1"},
+		Status: v1alpha1.WorkflowStatus{Nodes: map[string]v1alpha1.NodeStatus{
+			"node-id": {
+				Outputs: &v1alpha1.Outputs{Artifacts: v1alpha1.Artifacts{{
+					Name:             archive.ArchivedLogArtifactName,
+					ArtifactLocation: v1alpha1.ArtifactLocation{S3: &v1alpha1.S3Artifact{Key: key}},
+				}}},
+			},
+		}},
+	})
+	return model.LargeText(workflow.ToStringForStore())
+}
+
+func TestReadRunLogFromArchiveMultiUserRejectsLogKeyOutsideRunNamespace(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	t.Cleanup(func() { viper.Set(common.MultiUserMode, "false") })
+
+	foreignKey := "private-artifacts/victim-ns/workflow/2026/01/01/pod/main.log"
+	objectStore := &readerOnlyObjectStore{
+		files: map[string][]byte{foreignKey: []byte("victim log line\n")},
+	}
+	manager := &ResourceManager{
+		objectStore: objectStore,
+		logArchive:  archive.NewLogArchive("/logs", "main.log"),
+	}
+	run := &model.Run{
+		UUID:       "run-id",
+		Namespace:  "ns1",
+		RunDetails: model.RunDetails{WorkflowRuntimeManifest: archivedLogWorkflowManifest(t, foreignKey)},
+	}
+
+	var dst bytes.Buffer
+	err := manager.readRunLogFromArchive(context.Background(), run, "node-id", &dst)
+
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, err.(*util.UserError).ExternalStatusCode())
+	assert.Empty(t, objectStore.getFileReaderPaths, "the foreign object must not be fetched")
+	assert.Empty(t, dst.String())
+}
+
+func TestReadRunLogFromArchiveMultiUserServesLogKeyInsideRunNamespace(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	t.Cleanup(func() { viper.Set(common.MultiUserMode, "false") })
+
+	ownKey := "private-artifacts/ns1/workflow/2026/01/01/pod/main.log"
+	objectStore := &readerOnlyObjectStore{
+		files: map[string][]byte{ownKey: []byte("archived log line\n")},
+	}
+	manager := &ResourceManager{
+		objectStore: objectStore,
+		logArchive:  archive.NewLogArchive("/logs", "main.log"),
+	}
+	run := &model.Run{
+		UUID:       "run-id",
+		Namespace:  "ns1",
+		RunDetails: model.RunDetails{WorkflowRuntimeManifest: archivedLogWorkflowManifest(t, ownKey)},
+	}
+
+	var dst bytes.Buffer
+	err := manager.readRunLogFromArchive(context.Background(), run, "node-id", &dst)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{ownKey}, objectStore.getFileReaderPaths)
+	assert.Equal(t, "archived log line\n", dst.String())
+}
+
+func TestReadRunLogFromArchiveSingleUserDoesNotScopeLogKey(t *testing.T) {
+	key := "artifacts/workflow/2026/01/01/pod/main.log"
+	objectStore := &readerOnlyObjectStore{
+		files: map[string][]byte{key: []byte("archived log line\n")},
+	}
+	manager := &ResourceManager{
+		objectStore: objectStore,
+		logArchive:  archive.NewLogArchive("/logs", "main.log"),
+	}
+	run := &model.Run{
+		UUID:       "run-id",
+		RunDetails: model.RunDetails{WorkflowRuntimeManifest: archivedLogWorkflowManifest(t, key)},
+	}
+
+	var dst bytes.Buffer
+	err := manager.readRunLogFromArchive(context.Background(), run, "node-id", &dst)
+
+	require.NoError(t, err)
+	assert.Equal(t, "archived log line\n", dst.String())
 }

@@ -430,3 +430,84 @@ func TestReadArtifactV1_Unauthorized(t *testing.T) {
 	require.Contains(t, errorResponse.ErrorMessage, "User 'user@google.com' is not authorized")
 	require.Contains(t, errorResponse.ErrorMessage, "this is not allowed")
 }
+
+// A run's workflow status is authored by whoever can write Workflows in the
+// run namespace, while the object it names is fetched with the API server's
+// own object-store credentials. In multi-user mode a key outside the run
+// namespace's own subtree must therefore never be served through that run.
+func TestReadArtifactV1_MultiUserRejectsKeyOutsideRunNamespace(t *testing.T) {
+	foreignKey := "private-artifacts/victim-ns/workflow/2026/01/01/pod/secret.txt"
+
+	resourceManager, manager, run := initWithOneTimeRun(t)
+	defer resourceManager.Close()
+
+	err := resourceManager.ObjectStore().AddFile(context.TODO(), []byte("victim secret"), foreignKey)
+	require.NoError(t, err)
+
+	workflow := createWorkflowWithArtifact(run.UUID, "node-1", "artifact-1", foreignKey)
+	syncArtifactWorkflowWithFakeCluster(t, resourceManager, workflow)
+	_, err = manager.ReportWorkflowResource(context.Background(), workflow)
+	require.NoError(t, err)
+
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	runArtifactServer := NewRunArtifactServer(manager)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/apis/v1beta1/runs/%s/nodes/node-1/artifacts/artifact-1:read", run.UUID), nil)
+	req = req.WithContext(metadata.NewIncomingContext(req.Context(), metadata.New(map[string]string{
+		common.GoogleIAPUserIdentityHeader: common.GoogleIAPUserIdentityPrefix + "user@google.com",
+	})))
+	req = mux.SetURLVars(req, map[string]string{
+		"run_id":        run.UUID,
+		"node_id":       "node-1",
+		"artifact_name": "artifact-1",
+	})
+	rr := httptest.NewRecorder()
+
+	runArtifactServer.ReadArtifactV1(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	assert.NotContains(t, rr.Body.String(), base64.StdEncoding.EncodeToString([]byte("victim secret")))
+	assert.Contains(t, rr.Body.String(), "not owned by namespace")
+}
+
+func TestReadArtifactV1_MultiUserServesKeyInsideRunNamespace(t *testing.T) {
+	expectedContent := "own artifact content"
+	ownKey := "private-artifacts/ns1/workflow/2026/01/01/pod/artifact.txt"
+
+	resourceManager, manager, run := initWithOneTimeRun(t)
+	defer resourceManager.Close()
+	require.Equal(t, "ns1", run.Namespace)
+
+	err := resourceManager.ObjectStore().AddFile(context.TODO(), []byte(expectedContent), ownKey)
+	require.NoError(t, err)
+
+	workflow := createWorkflowWithArtifact(run.UUID, "node-1", "artifact-1", ownKey)
+	syncArtifactWorkflowWithFakeCluster(t, resourceManager, workflow)
+	_, err = manager.ReportWorkflowResource(context.Background(), workflow)
+	require.NoError(t, err)
+
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	runArtifactServer := NewRunArtifactServer(manager)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/apis/v1beta1/runs/%s/nodes/node-1/artifacts/artifact-1:read", run.UUID), nil)
+	req = req.WithContext(metadata.NewIncomingContext(req.Context(), metadata.New(map[string]string{
+		common.GoogleIAPUserIdentityHeader: common.GoogleIAPUserIdentityPrefix + "user@google.com",
+	})))
+	req = mux.SetURLVars(req, map[string]string{
+		"run_id":        run.UUID,
+		"node_id":       "node-1",
+		"artifact_name": "artifact-1",
+	})
+	rr := httptest.NewRecorder()
+
+	runArtifactServer.ReadArtifactV1(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	var jsonResponse map[string]string
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &jsonResponse))
+	decodedData, err := base64.StdEncoding.DecodeString(jsonResponse["data"])
+	require.NoError(t, err)
+	assert.Equal(t, expectedContent, string(decodedData))
+}

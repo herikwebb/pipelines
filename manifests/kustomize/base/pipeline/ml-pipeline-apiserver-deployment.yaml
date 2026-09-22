@@ -100,6 +100,15 @@ spec:
               value: "seaweedfs.kubeflow"
             - name: OBJECTSTORECONFIG_PORT
               value: "9000"
+            # Leading object-key segment that scopes each namespace's run artifacts and
+            # archived logs ("<prefix>/<namespace>/...") when serving them in multi-user
+            # mode. Override only when a customized Argo keyFormat changes that convention.
+            - name: ARTIFACT_NAMESPACE_KEY_PREFIX
+              valueFrom:
+                configMapKeyRef:
+                  name: pipeline-install-config
+                  key: ARTIFACT_NAMESPACE_KEY_PREFIX
+                  optional: true
             # relic variables
             - name: DBCONFIG_USER
               valueFrom:
