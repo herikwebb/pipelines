@@ -23,6 +23,8 @@ import registerTensorboardProxy, {
   getTensorboardProxyBasePath,
   parseTensorboardProxyPayload,
   parseTensorboardProxyRequest,
+  stripForwardedCredentialHeaders,
+  stripViewerResponseCookies,
 } from './tensorboard-proxy.js';
 
 const TENSORBOARD_PROXY_PREFIX = '/apps/tensorboard/proxy/';
@@ -274,5 +276,37 @@ describe('tensorboard-proxy', () => {
         url: expect.stringContaining('/pipeline/apps/tensorboard/proxy/'),
       }),
     );
+  });
+
+  it('strips session, authorization and identity headers before forwarding to the viewer', () => {
+    const removeHeader = vi.fn();
+
+    stripForwardedCredentialHeaders({ removeHeader }, ['kubeflow-userid', '']);
+
+    const removed = removeHeader.mock.calls.map(([name]) => name);
+    expect(removed).toEqual(
+      expect.arrayContaining([
+        'cookie',
+        'authorization',
+        'proxy-authorization',
+        'x-forwarded-access-token',
+        'x-auth-request-access-token',
+        'kubeflow-userid',
+      ]),
+    );
+    expect(removed).not.toContain('');
+  });
+
+  it('drops cookies set by the viewer service', () => {
+    const proxyRes = {
+      headers: {
+        'content-type': 'text/html',
+        'set-cookie': ['session=planted; Path=/'],
+      } as Record<string, string | string[] | undefined>,
+    };
+
+    stripViewerResponseCookies(proxyRes);
+
+    expect(proxyRes.headers).toEqual({ 'content-type': 'text/html' });
   });
 });

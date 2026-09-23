@@ -254,7 +254,9 @@ function createUIServer(options: UIConfigs) {
   registerHandler(app.get, '/apps/tensorboard', tensorboardGetHandler);
   registerHandler(app.delete, '/apps/tensorboard', tensorboardDeleteHandler);
   registerHandler(app.post, '/apps/tensorboard', tensorboardCreateHandler);
-  registerTensorboardProxy(app, basePath, options.viewer.tensorboard, authorizeFn);
+  registerTensorboardProxy(app, basePath, options.viewer.tensorboard, authorizeFn, [
+    options.auth.kubeflowUserIdHeader,
+  ]);
 
   /** Pod logs - conditionally stream through API server, otherwise directly from k8s and archive */
   if (options.artifacts.streamLogsFromServerApi) {

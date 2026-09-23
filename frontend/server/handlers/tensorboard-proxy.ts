@@ -27,6 +27,26 @@ import { isAllowedResourceName } from '../utils.js';
 
 const DEFAULT_CLUSTER_DOMAIN = '.svc.cluster.local';
 const TENSORBOARD_PROXY_PREFIX = '/apps/tensorboard/proxy/';
+/**
+ * Request headers that carry the caller's session or identity and must never
+ * reach the viewer service. The viewer pod runs in the tenant namespace with a
+ * tenant-chosen image, so anything forwarded to it is readable by that tenant.
+ * The configured identity header (e.g. kubeflow-userid) is added at runtime.
+ */
+const FORWARDED_CREDENTIAL_HEADERS = [
+  'cookie',
+  'authorization',
+  'proxy-authorization',
+  'x-forwarded-access-token',
+  'x-forwarded-email',
+  'x-forwarded-groups',
+  'x-forwarded-preferred-username',
+  'x-forwarded-user',
+  'x-auth-request-access-token',
+  'x-auth-request-email',
+  'x-auth-request-groups',
+  'x-auth-request-user',
+];
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const UI_SERVER_ROUTE_PREFIXES = ['/apis', '/apps', '/artifacts', '/k8s', '/system'];
 
@@ -254,13 +274,46 @@ export function parseTensorboardProxyRequest(
 }
 
 /**
+ * Removes the caller's session and identity headers from a request before it is
+ * forwarded to the viewer service. Authorization for the proxy is decided by
+ * the UI server from the signed token and the identity header; the viewer only
+ * needs the TensorBoard path and query, never the credentials that authorized it.
+ */
+export function stripForwardedCredentialHeaders(
+  proxyReq: { removeHeader(name: string): void },
+  identityHeaders: string[] = [],
+): void {
+  for (const headerName of [...FORWARDED_CREDENTIAL_HEADERS, ...identityHeaders]) {
+    if (headerName) {
+      proxyReq.removeHeader(headerName);
+    }
+  }
+}
+
+/**
+ * Drops cookies set by the viewer service so a tenant-controlled TensorBoard
+ * cannot plant cookies on the UI origin through the proxy.
+ */
+export function stripViewerResponseCookies(proxyRes: {
+  headers: Record<string, string | string[] | undefined>;
+}): void {
+  delete proxyRes.headers['set-cookie'];
+}
+
+/**
  * Registers the dedicated TensorBoard proxy middleware and routes.
+ *
+ * `identityHeaders` lists the request headers the deployment uses to convey the
+ * caller's identity (e.g. the configured kubeflow-userid header); they are
+ * stripped, together with cookies and authorization headers, before the request
+ * is forwarded to the viewer service.
  */
 export default function registerTensorboardProxy(
   app: express.Application,
   basePath: string,
   tensorboardConfig: ViewerTensorboardConfig,
   authorizeFn: AuthorizeFn,
+  identityHeaders: string[] = [],
 ) {
   app.use((req, _, next) => {
     const proxyBasePath = getTensorboardProxyBasePath(
@@ -343,6 +396,10 @@ export default function registerTensorboardProxy(
         const { proxyPath, viewerName } = req.tensorboardProxy as ParsedTensorboardProxyRequest &
           TensorboardProxyPayload;
         return buildTensorboardProxyUpstreamPath(viewerName, proxyPath, req.query);
+      },
+      on: {
+        proxyReq: (proxyReq) => stripForwardedCredentialHeaders(proxyReq, identityHeaders),
+        proxyRes: (proxyRes) => stripViewerResponseCookies(proxyRes),
       },
       headers: HACK_FIX_HPM_PARTIAL_RESPONSE_HEADERS,
     }),
