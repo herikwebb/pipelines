@@ -307,5 +307,17 @@
         "fix_branch": "security/fix-run-artifact-key-namespace-scope-20260922132028-1282",
         "upstream_compare_url": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-run-artifact-key-namespace-scope-20260922132028-1282?expand=1",
         "severity": "high"
+    },
+    {
+        "title": "Credential forwarding in the ml-pipeline-ui TensorBoard proxy: registerTensorboardProxy (frontend/server/handlers/tensorboard-proxy.ts) proxies to the tenant-namespace viewer service with no proxyReq/proxyRes hooks, so the victim's oauth2-proxy session cookie, Authorization bearer token and kubeflow-userid identity header are delivered verbatim to a viewer pod whose image/podTemplateSpec the tenant chooses (POST /apps/tensorboard image= / podtemplatespec=, or a directly created Viewer CR), and viewer Set-Cookie headers are relayed under the UI origin; any co-contributor or admin who opens the viewer leaks a replayable session to the tenant - fork PR open, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "2356c85df4bc2b1a195ee62a575b6a0d7146fbe3",
+        "detected_at_pst": "2026-09-23T06:46:43-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/159",
+        "primary_location": "frontend/server/handlers/tensorboard-proxy.ts",
+        "severity": "high",
+        "tracking_issue": "https://github.com/herikwebb/pipelines/issues/158",
+        "fix_branch": "security/fix-tensorboard-proxy-credential-forwarding-20260923134643-8319",
+        "upstream_compare_url": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-tensorboard-proxy-credential-forwarding-20260923134643-8319?expand=1"
     }
 ]
