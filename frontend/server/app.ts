@@ -29,6 +29,7 @@ import {
 } from './handlers/artifacts.js';
 import { getTensorboardHandlers } from './handlers/tensorboard.js';
 import { getAuthorizeFn } from './helpers/auth.js';
+import { rejectCrossSiteMutations } from './helpers/cross-site.js';
 import { getPodLogsHandler } from './handlers/pod-logs.js';
 import { getPodInfoHandlers } from './handlers/pod-info.js';
 import { getClusterNameHandler, getProjectIdHandler } from './handlers/gke-metadata.js';
@@ -256,6 +257,9 @@ function createUIServer(options: UIConfigs) {
     create: tensorboardCreateHandler,
     delete: tensorboardDeleteHandler,
   } = getTensorboardHandlers(options.viewer.tensorboard, authorizeFn);
+  // Viewer creation and deletion are authenticated by the caller's session, so
+  // refuse them when the browser reports the request as cross-site.
+  registerHandler(app.all, '/apps/tensorboard', rejectCrossSiteMutations);
   registerHandler(app.get, '/apps/tensorboard', tensorboardGetHandler);
   registerHandler(app.delete, '/apps/tensorboard', tensorboardDeleteHandler);
   registerHandler(app.post, '/apps/tensorboard', tensorboardCreateHandler);
@@ -377,6 +381,19 @@ function createUIServer(options: UIConfigs) {
   });
 
   /** Proxy to ml-pipeline api server */
+  // The proxied request carries the caller's session and the identity header
+  // the gateway derives from it, so state-changing calls that the browser
+  // reports as cross-site (for example an auto-submitted form on another
+  // site) must not reach the API server.
+  app.all(
+    [
+      `/${apiVersion1Prefix}/*`,
+      `/${apiVersion2Prefix}/*`,
+      `${basePath}/${apiVersion1Prefix}/*`,
+      `${basePath}/${apiVersion2Prefix}/*`,
+    ],
+    rejectCrossSiteMutations,
+  );
   app.all(
     `/${apiVersion1Prefix}/*`,
     createProxyMiddleware({
