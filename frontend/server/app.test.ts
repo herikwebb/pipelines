@@ -235,6 +235,98 @@ describe('UIServer apis', () => {
     });
   });
 
+  describe('cross-site request protection', () => {
+    let kfpApiServer: Server;
+    let proxiedRequests: string[];
+
+    beforeEach(async () => {
+      proxiedRequests = [];
+      kfpApiServer = express()
+        .all('/*', (req, res) => {
+          proxiedRequests.push(`${req.method} ${req.url}`);
+          res.status(200).json({});
+        })
+        .listen(0);
+      await waitForListening(kfpApiServer);
+      const address = kfpApiServer.address();
+      if (!address || typeof address === 'string') {
+        throw new Error('Expected mock API server to bind to a TCP port');
+      }
+      app = new UIServer(
+        loadConfigs(argv, {
+          ML_PIPELINE_SERVICE_HOST: 'localhost',
+          ML_PIPELINE_SERVICE_PORT: `${address.port}`,
+        }),
+      );
+    });
+
+    afterEach(async () => {
+      await new Promise<void>((resolve) => kfpApiServer.close(() => resolve()));
+    });
+
+    const forbiddenMessage = 'Cross-site requests are not allowed for this endpoint.';
+
+    it('rejects a cross-site POST to the v2 api proxy before it reaches the api server', async () => {
+      await requests(app.app)
+        .post('/apis/v2beta1/runs')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .set('Content-Type', 'text/plain')
+        .send('{"display_name":"x=y"}')
+        .expect(403, forbiddenMessage);
+      expect(proxiedRequests).toEqual([]);
+    });
+
+    it('rejects a cross-site POST to the base-path v1 api proxy', async () => {
+      await requests(app.app)
+        .post('/pipeline/apis/v1beta1/runs')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .send({})
+        .expect(403, forbiddenMessage);
+      expect(proxiedRequests).toEqual([]);
+    });
+
+    it('rejects a cross-site DELETE to the api proxy', async () => {
+      await requests(app.app)
+        .delete('/apis/v2beta1/runs/run-123')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .expect(403, forbiddenMessage);
+      expect(proxiedRequests).toEqual([]);
+    });
+
+    it('rejects a cross-site POST to the tensorboard viewer endpoint', async () => {
+      await requests(app.app)
+        .post('/apps/tensorboard?logdir=gs://bucket/logs&namespace=victim&image=evil')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .expect(403, forbiddenMessage);
+      await requests(app.app)
+        .post('/pipeline/apps/tensorboard?logdir=gs://bucket/logs&namespace=victim&image=evil')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .expect(403, forbiddenMessage);
+    });
+
+    it('still proxies cross-site GET requests', async () => {
+      await requests(app.app)
+        .get('/apis/v2beta1/runs')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .expect(200);
+      expect(proxiedRequests).toEqual(['GET /apis/v2beta1/runs']);
+    });
+
+    it('proxies same-origin POST requests', async () => {
+      await requests(app.app)
+        .post('/pipeline/apis/v2beta1/runs')
+        .set('Sec-Fetch-Site', 'same-origin')
+        .send({ display_name: 'run' })
+        .expect(200);
+      expect(proxiedRequests).toEqual(['POST /apis/v2beta1/runs']);
+    });
+
+    it('proxies POST requests from non-browser clients that send no Sec-Fetch-Site header', async () => {
+      await requests(app.app).post('/apis/v2beta1/runs').send({ display_name: 'run' }).expect(200);
+      expect(proxiedRequests).toEqual(['POST /apis/v2beta1/runs']);
+    });
+  });
+
   describe('/system', () => {
     describe('/cluster-name', () => {
       it('responds with cluster name data from gke metadata', async () => {
