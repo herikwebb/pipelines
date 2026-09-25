@@ -331,5 +331,17 @@
         "tracking_issue": "https://github.com/herikwebb/pipelines/issues/160",
         "fix_branch": "security/fix-apiserver-request-body-limit-20260925133002-21763",
         "upstream_compare_url": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-apiserver-request-body-limit-20260925133002-21763?expand=1"
+    },
+    {
+        "title": "CSRF through the ml-pipeline-ui API proxy: app.ts (frontend/server/app.ts) forwards every /apis/v1beta1|v2beta1/* request and serves POST/DELETE /apps/tensorboard with no origin, Sec-Fetch-Site, custom-header or content-type check, and the API server's MIMEWildcard JSONPb marshaler decodes text/plain form bodies, so a cross-site auto-submitted form carrying the victim's platform session cookie (no SameSite by default: Firefox/Safari, Chrome Lax+POST window) creates runs with an inline pipeline_spec or viewers in the victim's namespace as the victim - fork PR open, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "1caef56d3426286c68da1dddd6586ce1e00de784",
+        "detected_at_pst": "2026-09-25T06:41:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/163",
+        "primary_location": "frontend/server/app.ts",
+        "severity": "medium",
+        "tracking_issue": "https://github.com/herikwebb/pipelines/issues/162",
+        "fix_branch": "security/fix-ui-cross-site-mutations-20260925133740-5520",
+        "upstream_compare_url": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-ui-cross-site-mutations-20260925133740-5520?expand=1"
     }
 ]
