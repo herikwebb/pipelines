@@ -319,5 +319,17 @@
         "tracking_issue": "https://github.com/herikwebb/pipelines/issues/158",
         "fix_branch": "security/fix-tensorboard-proxy-credential-forwarding-20260923134643-8319",
         "upstream_compare_url": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-tensorboard-proxy-credential-forwarding-20260923134643-8319?expand=1"
+    },
+    {
+        "title": "Pre-authentication memory-exhaustion DoS in the KFP API server: buildHTTPRouter (backend/src/apiserver/main.go) proxies every /apis/ request to the grpc-gateway with no body limit (only PUT/PATCH pipeline updates are capped) and startRPCServer sets grpc.MaxRecvMsgSize(math.MaxInt32), so the JSONPb marshaler buffers multi-GB bodies before any TokenReview/SAR; any tenant pod or unauthenticated in-cluster client reaching ml-pipeline:8888/8887 (Istio admits requests without kubeflow-userid) can OOM the shared API server - fork PR open, upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "1caef56d3426286c68da1dddd6586ce1e00de784",
+        "detected_at_pst": "2026-09-25T06:36:15-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/161",
+        "primary_location": "backend/src/apiserver/main.go",
+        "severity": "medium",
+        "tracking_issue": "https://github.com/herikwebb/pipelines/issues/160",
+        "fix_branch": "security/fix-apiserver-request-body-limit-20260925133002-21763",
+        "upstream_compare_url": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-apiserver-request-body-limit-20260925133002-21763?expand=1"
     }
 ]
