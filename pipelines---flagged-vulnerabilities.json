@@ -238,11 +238,11 @@
         "reported_link": "https://github.com/herikwebb/pipelines/pull/142"
     },
     {
-        "title": "Cross-tenant pipeline metadata disclosure via by-name lookup: PipelineStore.GetPipelineByNameAndNamespace[V1] omit the Namespace predicate when the namespace is empty and getPipelineByName skips the SubjectAccessReview for an empty-namespace get, so an authenticated multi-user tenant calling GetPipelineByName without a namespace receives the newest ready pipeline of that name from any namespace (UUID, namespace, description, tags; v1 also latest-version parameters and code_source_url) - fork PR open, upstream via private channel (SECURITY.md)",
+        "title": "Cross-tenant pipeline metadata disclosure via by-name lookup: PipelineStore.GetPipelineByNameAndNamespace[V1] omit the Namespace predicate when the namespace is empty and getPipelineByName skips the SubjectAccessReview for an empty-namespace get, so an authenticated multi-user tenant calling GetPipelineByName without a namespace receives the newest ready pipeline of that name from any namespace (UUID, namespace, description, tags; v1 also latest-version parameters and code_source_url) - fixed upstream by kubeflow/pipelines#14522 (v2 lookup) and #14478 (v1 API removed); fork PR #144 closed as superseded",
         "status": "active",
         "commit_hash": "967db920fe06815e780886ee99dd6db44bd1faab",
         "detected_at_pst": "2026-09-12T06:50:00-07:00",
-        "reported_link": "https://github.com/herikwebb/pipelines/pull/144"
+        "reported_link": "https://github.com/kubeflow/pipelines/pull/14522"
     },
     {
         "title": "CI-gate bypass via spoofed workflow_run: add-ci-passed-label.yml is triggered by workflow_run on any completed workflow *named* \"CI Check\" and applies the ci-passed label from that run's ci-check-result artifact without verifying the triggering workflow path (.github/workflows/ci-checks.yml) or event (pull_request_target), so an ok-to-test fork PR that adds its own workflow named CI Check can self-award ci-passed with a crafted artifact - issue and branch filed by the 2026-09-13 run, fork PR opened 2026-09-15, upstream via private channel (SECURITY.md)",
