@@ -257,16 +257,17 @@
         "upstream_fix": "https://github.com/kubeflow/pipelines/pull/14552"
     },
     {
-        "title": "Unauthenticated SeaweedFS credential minting via the multi-user profile-controller sync webhook: pipelines-profile-controller/sync.py serves the metacontroller sync hook over plain HTTP with no authentication, trusts object.metadata.name from the request body, calls iam.create_access_key/put_user_policy for that namespace with the controller's root object-store credentials and returns the new access key and secret in the response; the pod has no Istio sidecar and no NetworkPolicy, so any tenant pod can POST to kubeflow-pipelines-profile-controller.kubeflow/sync naming a victim namespace and obtain credentials for its private-artifacts/private prefixes - fork PR open, upstream via private channel (SECURITY.md)",
-        "status": "active",
+        "title": "Unauthenticated SeaweedFS credential minting via the multi-user profile-controller sync webhook: pipelines-profile-controller/sync.py serves the metacontroller sync hook over plain HTTP with no authentication, trusts object.metadata.name from the request body, calls iam.create_access_key/put_user_policy for that namespace with the controller's root object-store credentials and returns the new access key and secret in the response; the pod has no Istio sidecar and no NetworkPolicy, so any tenant pod can POST to kubeflow-pipelines-profile-controller.kubeflow/sync naming a victim namespace and obtain credentials for its private-artifacts/private prefixes - fork PR #148 reviewed then closed 2026-09-26 as superseded; fixed upstream by kubeflow/pipelines#14560 (f6afdfac9, Fixes upstream #14557)",
+        "status": "fixed_upstream",
         "commit_hash": "e85a1321729ea96ac71c3c6f17c666879552ee7b",
         "detected_at_pst": "2026-09-15T06:23:00-07:00",
-        "reported_link": "https://github.com/herikwebb/pipelines/pull/148",
+        "reported_link": "https://github.com/kubeflow/pipelines/pull/14560",
         "primary_location": "manifests/kustomize/base/installs/multi-user/pipelines-profile-controller/sync.py",
         "issue_url": "https://github.com/herikwebb/pipelines/issues/147",
         "fix_branch": "security/fix-profile-controller-sync-ingress-20260915132312-23205",
         "severity": "high",
-        "notes": "2026-09-26: fix branch rebased onto fork master 89594c6d4 (head 4f998a9ef) so the new SHA-bound ci-passed gate evaluates a current head; PR #148 still open."
+        "notes": "2026-09-26: upstream merged the identical NetworkPolicy (with manifest test and README notes) as #14560; fork PR #148 closed, issue #147 closed as completed.",
+        "upstream_fix": "https://github.com/kubeflow/pipelines/pull/14560"
     },
     {
         "title": "Local credential exposure in kfp.Client: auth.get_auth_token persists the IAP OAuth refresh token together with the OAuth client id and client secret to ~/.config/kfp/credentials.json (and set_user_namespace persists the context file that can carry client authentication cookies/headers) using os.makedirs and open('w') with process-default permissions (0755/0644) and no chmod, so any other local user or process able to read the home directory obtains a long-lived refresh token plus the client secret and can mint IAP ID tokens as the victim - fork PR open, upstream via private channel (SECURITY.md)",
