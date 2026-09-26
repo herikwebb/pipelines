@@ -874,6 +874,92 @@ func TestBuildHTTPRouter_HandlersAreCalled(t *testing.T) {
 	}
 }
 
+func TestLimitRequestBodyMiddleware(t *testing.T) {
+	tests := []struct {
+		name                 string
+		contentLength        int64
+		body                 string
+		expectedStatus       int
+		expectDownstreamCall bool
+		expectReadErr        bool
+	}{
+		{
+			name:                 "body under limit is passed through unchanged",
+			contentLength:        3,
+			body:                 "abc",
+			expectedStatus:       http.StatusOK,
+			expectDownstreamCall: true,
+		},
+		{
+			name:                 "declared content length over limit is rejected before reading",
+			contentLength:        MaxAPIRequestBodySize + 1,
+			body:                 "",
+			expectedStatus:       http.StatusRequestEntityTooLarge,
+			expectDownstreamCall: false,
+		},
+		{
+			name:                 "unknown content length over limit fails once the ceiling is reached",
+			contentLength:        -1,
+			body:                 strings.Repeat("a", MaxAPIRequestBodySize+1),
+			expectedStatus:       http.StatusOK,
+			expectDownstreamCall: true,
+			expectReadErr:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			downstreamCalled := false
+			var readBody []byte
+			var readErr error
+			downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				downstreamCalled = true
+				readBody, readErr = io.ReadAll(r.Body)
+				w.WriteHeader(http.StatusOK)
+			})
+			handler := limitRequestBodyMiddleware(downstream)
+
+			req := httptest.NewRequest(http.MethodPost, "/apis/v2beta1/runs", strings.NewReader(tt.body))
+			req.ContentLength = tt.contentLength
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			assert.Equal(t, tt.expectedStatus, rec.Code)
+			assert.Equal(t, tt.expectDownstreamCall, downstreamCalled)
+			if !tt.expectDownstreamCall {
+				assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+				assert.JSONEq(t, `{"code":3,"message":"Request body too large"}`, rec.Body.String())
+				return
+			}
+			if tt.expectReadErr {
+				var maxBytesErr *http.MaxBytesError
+				require.ErrorAs(t, readErr, &maxBytesErr)
+				assert.Equal(t, int64(MaxAPIRequestBodySize), maxBytesErr.Limit)
+				return
+			}
+			require.NoError(t, readErr)
+			assert.Equal(t, tt.body, string(readBody))
+		})
+	}
+}
+
+func TestBuildHTTPRouter_GatewayBodyIsBounded(t *testing.T) {
+	gatewayHandlerCalled := false
+	gatewayHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gatewayHandlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+	router := buildHTTPRouter(newNoOpHTTPRouterDeps(), gatewayHandler, "database")
+
+	request := httptest.NewRequest(http.MethodPost, "/apis/v2beta1/runs", strings.NewReader("{}"))
+	request.ContentLength = MaxAPIRequestBodySize + 1
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, recorder.Code)
+	assert.False(t, gatewayHandlerCalled, "oversized bodies must be rejected before reaching the gRPC gateway")
+}
+
 func TestBuildHTTPRouter_UnmatchedAPIsGoToGateway(t *testing.T) {
 	gatewayHandlerCalled := false
 	gatewayHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
