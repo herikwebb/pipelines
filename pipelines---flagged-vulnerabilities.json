@@ -343,5 +343,17 @@
         "tracking_issue": "https://github.com/herikwebb/pipelines/issues/162",
         "fix_branch": "security/fix-ui-cross-site-mutations-20260925133740-5520",
         "upstream_compare_url": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-ui-cross-site-mutations-20260925133740-5520?expand=1"
+    },
+    {
+        "title": "Cross-tenant pipeline metadata disclosure via namespace-less ListPipelines on the Kubernetes pipeline store: PipelineStoreKubernetes.ListPipelines (backend/src/apiserver/storage/pipeline_store_kubernetes.go) turns the empty namespace of a shared-read request (authorized without SubjectAccessReview by authorizePipelineAccessAndGet) into InNamespace(\"\"), which controller-runtime treats as all namespaces, so any authenticated multi-user caller lists every tenant's Pipeline CRs (names, descriptions, tags, namespaces, ids) when REQUIRE_NAMESPACE_FOR_PIPELINES is unset (default).",
+        "status": "active",
+        "commit_hash": "89594c6d4e1eb41f6958eadfd33e991033127bc5",
+        "detected_at_pst": "2026-09-26T06:36:20-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/165",
+        "primary_location": "backend/src/apiserver/storage/pipeline_store_kubernetes.go",
+        "severity": "medium",
+        "tracking_issue": "https://github.com/herikwebb/pipelines/issues/164",
+        "fix_branch": "security/fix-k8s-pipeline-list-namespace-scope-20260926133055-8191",
+        "upstream_compare_url": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-k8s-pipeline-list-namespace-scope-20260926133055-8191?expand=1"
     }
 ]
