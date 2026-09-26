@@ -30,6 +30,7 @@ import {
   sendArtifactError,
   streamDirectoryAsTarGz,
   TEST_ONLY,
+  TrimmedTextStream,
   waitForArtifactOperation,
 } from './artifacts.js';
 
@@ -38,6 +39,60 @@ vi.mock('../k8s-helper.js', () => ({
   getK8sSecret: vi.fn(),
   getPod: vi.fn(),
 }));
+
+async function trimThroughStream(chunks: Array<string | Buffer>): Promise<string> {
+  const stream = new TrimmedTextStream();
+  const output: Buffer[] = [];
+  stream.on('data', (chunk: Buffer | string) => output.push(Buffer.from(chunk)));
+  const finished = new Promise<void>((resolve, reject) => {
+    stream.on('end', resolve);
+    stream.on('error', reject);
+  });
+  for (const chunk of chunks) {
+    stream.write(chunk);
+  }
+  stream.end();
+  await finished;
+  return Buffer.concat(output).toString();
+}
+
+describe('TrimmedTextStream', () => {
+  it('matches String.prototype.trim for text delivered in one chunk', async () => {
+    const text = ' \n\t hello  world  \n';
+    expect(await trimThroughStream([text])).toBe(text.trim());
+  });
+
+  it('drops trailing whitespace that spans several chunks', async () => {
+    expect(await trimThroughStream(['hello', ' ', '\n', ' \t'])).toBe('hello');
+  });
+
+  it('keeps interior whitespace that spans several chunks', async () => {
+    expect(await trimThroughStream(['a', ' ', ' ', 'b'])).toBe('a  b');
+  });
+
+  it('drops leading whitespace that spans several chunks', async () => {
+    expect(await trimThroughStream([' ', '\n', '  x'])).toBe('x');
+  });
+
+  it('emits nothing for whitespace-only input', async () => {
+    expect(await trimThroughStream([' \n', '\t'])).toBe('');
+  });
+
+  it('does not split multi-byte characters across chunk boundaries', async () => {
+    const encoded = Buffer.from(' héllo wörld ');
+    const chunks = [encoded.subarray(0, 3), encoded.subarray(3, 9), encoded.subarray(9)];
+    expect(await trimThroughStream(chunks)).toBe('héllo wörld');
+  });
+
+  it('bounds the whitespace held back while deciding whether it is trailing', async () => {
+    const longRun = ' '.repeat(70 * 1024);
+    const result = await trimThroughStream(['a', longRun, 'b']);
+    expect(result).toBe(`a${longRun}b`);
+    // A run beyond the bound is released as-is rather than accumulated.
+    const trailing = await trimThroughStream(['a', longRun]);
+    expect(trailing).toBe(`a${longRun}`);
+  });
+});
 
 function makeRequest(path: string, query: Record<string, unknown> = {}): Request {
   return { path, query } as unknown as Request;
