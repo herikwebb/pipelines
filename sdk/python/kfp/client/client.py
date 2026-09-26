@@ -402,10 +402,10 @@ class Client:
             namespace: Namespace to use within the Kubernetes cluster (namespace containing the Kubeflow Pipelines deployment).
         """
         self._context_setting['namespace'] = namespace
-        if not os.path.exists(os.path.dirname(Client._LOCAL_KFP_CONTEXT)):
-            os.makedirs(os.path.dirname(Client._LOCAL_KFP_CONTEXT))
-        with open(Client._LOCAL_KFP_CONTEXT, 'w') as f:
-            json.dump(self._context_setting, f)
+        # The context file can carry client authentication cookies and
+        # headers, so keep it owner-only like the credentials file.
+        auth.write_private_json(Client._LOCAL_KFP_CONTEXT,
+                                self._context_setting)
 
     def get_kfp_healthz(
         self,
