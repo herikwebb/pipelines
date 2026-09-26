@@ -224,7 +224,7 @@
         "primary_location": "sdk/python/kfp/client/client.py"
     },
     {
-        "title": "GCE access-token and identity-token disclosure via pod logs: proxy/attempt-register-vm-on-proxy.sh runs under set -ex and the registration curl expands $(gcloud auth print-access-token) and ${VM_ID} on its command line, so bash xtrace writes the live Bearer token to the proxy-agent container log readable by any pods/log reader or log-pipeline consumer (GKE Cloud Logging) - fork PR open, upstream via private channel (SECURITY.md)",
+        "title": "GCE access-token and identity-token disclosure via pod logs: proxy/attempt-register-vm-on-proxy.sh runs under set -ex and the registration curl expands $(gcloud auth print-access-token) and ${VM_ID} on its command line, so bash xtrace writes the live Bearer token to the proxy-agent container log readable by any pods/log reader or log-pipeline consumer (GKE Cloud Logging) - fork PR #140 auto-closed by the upstream PR Gate workflow after the master sync (issue #139 labeled ready and PR body links it; reopen to continue), upstream via private channel (SECURITY.md)",
         "status": "active",
         "commit_hash": "967db920fe06815e780886ee99dd6db44bd1faab",
         "detected_at_pst": "2026-09-12T06:30:00-07:00",
