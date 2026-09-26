@@ -45,7 +45,7 @@ type ArchivedArtifactRepository = ArtifactRepository & { s3: { keyFormat: string
 function workflowWithEndpoint(
   endpoint: string,
   insecure: boolean,
-  logKey = 'tenant/task/main.log',
+  logKey = 'private-artifacts/tenant/task/main.log',
 ): PartialArgoWorkflow {
   return {
     status: {
@@ -228,7 +228,10 @@ describe('/k8s/pod/logs workflow artifact endpoints', () => {
         port,
         useSSL: !insecure,
       });
-      expect(getObject).toHaveBeenCalledExactlyOnceWith('workflow-logs', 'tenant/task/main.log');
+      expect(getObject).toHaveBeenCalledExactlyOnceWith(
+        'workflow-logs',
+        'private-artifacts/tenant/task/main.log',
+      );
     },
   );
 
@@ -398,7 +401,50 @@ describe('/k8s/pod/logs workflow artifact endpoints', () => {
       port: 9000,
       useSSL: false,
     });
-    expect(getObject).toHaveBeenCalledExactlyOnceWith('workflow-logs', 'tenant/task/main.log');
+    expect(getObject).toHaveBeenCalledExactlyOnceWith(
+      'workflow-logs',
+      'private-artifacts/tenant/task/main.log',
+    );
+  });
+
+  it.each([
+    ['another namespace', 'private-artifacts/victim/task/main.log'],
+    ['no namespace prefix', 'tenant/task/main.log'],
+    ['a traversal segment', 'private-artifacts/tenant/../victim/main.log'],
+  ])(
+    'rejects a user-namespace workflow status log key with %s without reading the object store (security)',
+    async (_case, logKey) => {
+      vi.mocked(getArgoWorkflow).mockResolvedValue(
+        workflowWithEndpoint('operator-store.kubeflow:9000', true, logKey),
+      );
+
+      const response = await createRequest()
+        .get('/k8s/pod/logs')
+        .query({ podname: podName, podnamespace: 'tenant' })
+        .expect(500);
+
+      expect(response.text).toContain('log key is not owned by namespace tenant');
+      expect(getK8sSecret).not.toHaveBeenCalled();
+      expect(MinioClient).not.toHaveBeenCalled();
+      expect(getObject).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still serves a server-namespace workflow status log key outside the namespace prefix', async () => {
+    vi.mocked(getArgoWorkflow).mockResolvedValue(
+      workflowWithEndpoint('operator-store.kubeflow:9000', true, 'kubeflow-logs/task/main.log'),
+    );
+    vi.mocked(getK8sSecret).mockResolvedValue('workflow-store-credential');
+
+    await createRequest()
+      .get('/k8s/pod/logs')
+      .query({ podname: podName, podnamespace: 'kubeflow' })
+      .expect(200, logContent);
+
+    expect(getObject).toHaveBeenCalledExactlyOnceWith(
+      'workflow-logs',
+      'kubeflow-logs/task/main.log',
+    );
   });
 
   it('falls back to the operator archive after rejecting an untrusted workflow when archiveLogs is enabled', async () => {
