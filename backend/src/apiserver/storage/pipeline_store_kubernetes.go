@@ -75,6 +75,14 @@ func (k *PipelineStoreKubernetes) ListPipelines(filterContext *model.FilterConte
 	listOptions := []ctrlclient.ListOption{ctrlclient.UnsafeDisableDeepCopy}
 
 	if filterContext.ReferenceKey != nil && filterContext.Type == model.NamespaceResourceType {
+		if filterContext.ID == "" && common.IsMultiUserMode() {
+			// An empty namespace selects shared (namespace-less) pipelines. Pipeline
+			// objects are always namespaced, so this store has none, and an empty
+			// InNamespace option would instead list every namespace in the cluster
+			// and return other tenants' pipelines to a caller who was never
+			// authorized for their namespaces.
+			return []*model.Pipeline{}, 0, "", nil
+		}
 		listOptions = append(listOptions, ctrlclient.InNamespace(filterContext.ID))
 	}
 
