@@ -14,8 +14,14 @@
 # limitations under the License.
 
 import ast
+import json
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
+import textwrap
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -37,8 +43,8 @@ def _has_mapping(document: str, key: str, indentation: int) -> bool:
 def _mapping_block(document: str, key: str, indentation: int) -> str:
     lines = document.splitlines()
     marker = _mapping_marker(key, indentation)
-    start = next(index for index, line in enumerate(lines)
-                 if marker.match(line))
+    start = next(
+        index for index, line in enumerate(lines) if marker.match(line))
 
     end = len(lines)
     for index in range(start + 1, len(lines)):
@@ -56,8 +62,7 @@ def _mapping_block(document: str, key: str, indentation: int) -> str:
 def _before_mapping(document: str, key: str, indentation: int) -> str:
     lines = document.splitlines()
     marker = _mapping_marker(key, indentation)
-    end = next(index for index, line in enumerate(lines)
-               if marker.match(line))
+    end = next(index for index, line in enumerate(lines) if marker.match(line))
     return '\n'.join(lines[:end]) + '\n'
 
 
@@ -65,8 +70,8 @@ def _folded_scalar(document: str, key: str, indentation: int) -> str:
     lines = document.splitlines()
     marker = re.compile(r'^' + (' ' * indentation) + re.escape(key) +
                         r':\s*[>|][-+]?\s*$')
-    start = next(index for index, line in enumerate(lines)
-                 if marker.match(line))
+    start = next(
+        index for index, line in enumerate(lines) if marker.match(line))
 
     values = []
     for line in lines[start + 1:]:
@@ -94,8 +99,8 @@ def _evaluate_condition_node(node, values):
     if isinstance(node, ast.Expression):
         return _evaluate_condition_node(node.body, values)
     if isinstance(node, ast.BoolOp):
-        operands = (_evaluate_condition_node(value, values)
-                    for value in node.values)
+        operands = (
+            _evaluate_condition_node(value, values) for value in node.values)
         if isinstance(node.op, ast.And):
             return all(operands)
         if isinstance(node.op, ast.Or):
@@ -149,37 +154,120 @@ class MetaWorkflowConcurrencyTest(unittest.TestCase):
         pre_concurrency = _before_mapping(job, 'concurrency', 4)
         condition = _folded_scalar(pre_concurrency, 'if', 4)
         concurrency = _mapping_block(job, 'concurrency', 4)
-        concurrency_group = _folded_scalar(concurrency, 'group', 6)
+        concurrency_group = _plain_scalar(concurrency, 'group', 6)
 
-        self.assertEqual(
-            condition,
-            "(github.event.action != 'labeled' && github.event.action != 'unlabeled') || "
-            "(github.event.action == 'labeled' && github.event.label.name == 'ok-to-test') || "
-            "(github.event.action == 'unlabeled' && github.event.label.name == 'needs-ok-to-test')",
-        )
-
-        expected_results = {
-            ('opened', ''): True,
-            ('synchronize', ''): True,
-            ('reopened', ''): True,
-            ('labeled', 'ok-to-test'): True,
-            ('unlabeled', 'needs-ok-to-test'): True,
-            ('labeled', 'dependencies'): False,
-            ('labeled', 'size/M'): False,
-            ('labeled', 'needs-ok-to-test'): False,
-            ('unlabeled', 'ok-to-test'): False,
-        }
-        for event, expected in expected_results.items():
-            with self.subTest(action=event[0], label=event[1]):
-                self.assertEqual(
-                    _evaluate_label_condition(condition, *event), expected)
+        self.assertIn("github.event.workflow_run.event == 'pull_request'",
+                      condition)
+        self.assertIn("github.event.label.name == 'ok-to-test'", condition)
+        self.assertIn("github.event.label.name == 'needs-ok-to-test'",
+                      condition)
 
         self.assertFalse(_has_mapping(workflow, 'concurrency', 0))
-        self.assertIn("&& 'head-update' || github.run_id", concurrency_group)
+        self.assertIn('github.event.workflow_run.head_sha', concurrency_group)
+        self.assertIn('github.event.pull_request.head.sha', concurrency_group)
         self.assertEqual(
-            _plain_scalar(concurrency, 'cancel-in-progress', 6),
-            "${{ github.event.action == 'synchronize' }}",
-        )
+            _plain_scalar(concurrency, 'cancel-in-progress', 6), 'false')
+
+    def test_scheduled_recovery_uses_same_short_writer(self):
+        workflow = self._read_workflow('ci-checks.yml')
+        jobs = _mapping_block(workflow, 'jobs', 0)
+        writer = _mapping_block(jobs, 'check_ci_status', 2)
+        discovery = _mapping_block(jobs, 'recovery_candidates', 2)
+        self.assertIn("cron: '7,22,37,52 * * * *'", workflow)
+        self.assertIn("github.event_name == 'schedule'", discovery)
+        self.assertNotIn('concurrency:', discovery)
+        self.assertIn(
+            'matrix.candidate.head || github.event.workflow_run.head_sha',
+            writer)
+        self.assertIn('name: check_ci_status', writer)
+        self.assertIn('max-parallel: 4', writer)
+        self.assertIn('fail-fast: false', writer)
+        self.assertIn('CI_RECOVERY_NUMBER: ${{ matrix.candidate.number }}',
+                      writer)
+        self.assertIn('CI_RECOVERY_HEAD: ${{ matrix.candidate.head }}', writer)
+        self.assertIn("poll: 'false'", writer)
+        # poll: 'false' alone is not enough: the pinned action still waits a
+        # minute before its first API call, holding the shared writer lock.
+        self.assertIn("delay: '0'", writer)
+        self.assertNotIn('sleep', writer)
+
+    def test_publisher_has_pr_label_write_permission(self):
+        workflow = self._read_workflow('ci-checks.yml')
+        jobs = _mapping_block(workflow, 'jobs', 0)
+        for name, expected in [('check_ci_status', 'write'),
+                               ('recovery_candidates', 'read')]:
+            with self.subTest(job=name):
+                job = _mapping_block(jobs, name, 2)
+                permissions = _mapping_block(job, 'permissions', 4)
+                self.assertEqual(
+                    _plain_scalar(permissions, 'pull-requests', 6), expected)
+
+    def test_publisher_checkout_uses_only_trusted_refs(self):
+        workflow = self._read_workflow('ci-checks.yml')
+        writer = _mapping_block(
+            _mapping_block(workflow, 'jobs', 0), 'check_ci_status', 2)
+        checkouts = [
+            step for step in writer.split('      - ')
+            if re.search(r'(?m)^        uses: actions/checkout@', step)
+        ]
+        cases = [
+            ('pull_request_target', 'opened', 'base-sha'),
+            ('pull_request_target', 'synchronize', 'base-sha'),
+            ('pull_request_target', 'reopened', 'base-sha'),
+            ('pull_request_target', 'closed', 'merged-pr-sha'),
+            ('pull_request_target', 'closed', 'base-sha'),
+            ('workflow_run', 'completed', 'default-sha'),
+            ('schedule', '', 'default-sha'),
+        ]
+        for event_name, action, sha in cases:
+            for default_branch in ['master', 'release/main']:
+                with self.subTest(
+                        event=event_name,
+                        action=action,
+                        sha=sha,
+                        default_branch=default_branch):
+                    active = []
+                    for step in checkouts:
+                        condition = _plain_scalar(step, 'if', 8)
+                        condition = condition.replace('github.event_name',
+                                                      'event_name')
+                        condition = condition.replace('github.event.action',
+                                                      'action')
+                        condition = condition.replace('&&', ' and ')
+                        condition = condition.replace('||', ' or ')
+                        if _evaluate_condition_node(
+                                ast.parse(condition, mode='eval'), {
+                                    'event_name': event_name,
+                                    'action': action,
+                                }):
+                            active.append(step)
+                    self.assertEqual(len(active), 1)
+                    step = active[0]
+                    ref = _plain_scalar(step, 'ref', 10)
+                    ref = ref.replace('${{ github.sha }}', sha).replace(
+                        '${{ github.event.repository.default_branch }}',
+                        default_branch)
+                    expected = (f'refs/heads/{default_branch}'
+                                if event_name == 'pull_request_target' and
+                                action == 'closed' else sha)
+                    self.assertEqual(ref, expected)
+                    self.assertEqual(
+                        _plain_scalar(step, 'repository', 10),
+                        '${{ github.repository }}')
+                    self.assertEqual(
+                        _plain_scalar(step, 'persist-credentials', 10), 'false')
+                    self.assertNotIn('allow-unsafe-pr-checkout', step)
+
+    def test_publisher_exclusion_matches_hosted_matrix_job_name(self):
+        workflow = self._read_workflow('ci-checks.yml')
+        exclusions = re.search(r"checks_exclude: '([^']+)'", workflow).group(1)
+        pattern = exclusions.split(',')[0]
+        for name in [
+                'check_ci_status', 'check_ci_status (0)',
+                'check_ci_status (14111, abc123)'
+        ]:
+            self.assertIsNotNone(re.fullmatch(pattern, name))
+        self.assertIsNone(re.fullmatch(pattern, 'check_ci_status_unrelated'))
 
     def test_approval_runs_on_open_but_skips_unrelated_labels(self):
         workflow = self._read_workflow('gh-workflow-approve.yml')
@@ -217,20 +305,175 @@ class MetaWorkflowConcurrencyTest(unittest.TestCase):
             "${{ github.event.action == 'synchronize' }}",
         )
 
-    def test_eligibility_shell_receives_label_name_through_environment(self):
-        workflow = self._read_workflow('ci-checks.yml')
-        step_start = workflow.index(
-            '      - name: Determine whether CI polling is needed')
-        step_end = workflow.index(
-            '      - name: Wait for action_required workflow runs to be approved'
+    def test_gatekeeper_exempts_only_trusted_automation_authors(self):
+        workflow = self._read_workflow('pr-gate.yml')
+        jobs = _mapping_block(workflow, 'jobs', 0)
+        job = _mapping_block(jobs, 'check-pr-author', 2)
+        condition = _folded_scalar(_before_mapping(job, 'steps', 4), 'if', 4)
+        self.assertEqual(
+            condition,
+            "github.event.pull_request.user.login != 'dependabot[bot]' && "
+            "github.event.pull_request.user.login != 'copybara-service[bot]'",
         )
-        eligibility_step = workflow[step_start:step_end]
-        shell_script = eligibility_step.split('        run: |', 1)[1]
 
-        self.assertIn('LABEL_NAME: ${{ github.event.label.name }}',
-                      eligibility_step)
-        self.assertNotIn('${{ github.event.label.name }}', shell_script)
-        self.assertIn("reason=\"Added label '${LABEL_NAME}'", shell_script)
+        expression = condition.replace('github.event.pull_request.user.login',
+                                       'author').replace(
+                                           'github.actor', 'actor')
+        parsed = ast.parse(expression.replace('&&', ' and '), mode='eval')
+        cases = [
+            ('dependabot[bot]', 'dependabot[bot]', False),
+            ('dependabot[bot]', 'maintainer', False),
+            ('copybara-service[bot]', 'copybara-service[bot]', False),
+            ('copybara-service[bot]', 'maintainer', False),
+            ('contributor', 'dependabot[bot]', True),
+            ('contributor', 'copybara-service[bot]', True),
+            ('contributor', 'maintainer', True),
+            ('renovate[bot]', 'renovate[bot]', True),
+            ('dependabot-helper', 'dependabot-helper', True),
+            ('copybara-service', 'copybara-service', True),
+        ]
+        for author, actor, should_run in cases:
+            with self.subTest(author=author, actor=actor):
+                self.assertEqual(
+                    _evaluate_condition_node(parsed, {
+                        'author': author,
+                        'actor': actor,
+                    }), should_run)
+
+    def test_gatekeeper_uses_trusted_shared_membership_module(self):
+        workflow = self._read_workflow('pr-gate.yml')
+        self.assertIn("if: steps.membership-check.outputs.is_member == 'false'",
+                      workflow)
+        self.assertNotIn('continue-on-error', workflow)
+        self.assertNotIn('author_association', workflow)
+        self.assertNotIn('contributor-report.py', workflow)
+        self.assertIn('ref: ${{ github.workflow_sha }}', workflow)
+        self.assertIn('persist-credentials: false', workflow)
+        self.assertIn('            .github/scripts/kubeflow_membership.py\n',
+                      workflow)
+        self.assertIn('            .github/scripts/requirements.txt\n',
+                      workflow)
+        self.assertIn('run: python3 .github/scripts/kubeflow_membership.py',
+                      workflow)
+        self.assertIn('PR_AUTHOR: ${{ github.event.pull_request.user.login }}',
+                      workflow)
+        self.assertIn("'.github/workflows/pr-gate.yml'",
+                      self._read_workflow('ci-scripts-tests.yml'))
+
+    def test_membership_consumers_install_shared_requirements(self):
+        install = 'run: python3 -m pip install -r .github/scripts/requirements.txt'
+        consumers = {
+            'pr-gate.yml':
+                'run: python3 .github/scripts/kubeflow_membership.py',
+            'contributor-report.yml':
+                'run: python3 .github/scripts/contributor-report.py',
+            'ci-scripts-tests.yml':
+                'run: python3 -m unittest discover',
+        }
+        for name, consumer in consumers.items():
+            with self.subTest(workflow=name):
+                workflow = self._read_workflow(name)
+                self.assertLess(
+                    workflow.index('uses: actions/setup-python@'),
+                    workflow.index(install))
+                self.assertLess(
+                    workflow.index(install), workflow.index(consumer))
+                if name != 'ci-scripts-tests.yml':
+                    self.assertIn(
+                        '            .github/scripts/requirements.txt\n',
+                        workflow)
+                    self.assertIn('ref: ${{ github.workflow_sha }}', workflow)
+        requirements = (ROOT / '.github/scripts/requirements.txt').read_text()
+        self.assertRegex(requirements, r'(?m)^PyYAML==\d+\.\d+\.\d+$')
+
+    @unittest.skipUnless(
+        shutil.which('jq'), 'jq is required by the gate script')
+    def test_gatekeeper_closure_message_and_guidelines_link(self):
+        workflow = self._read_workflow('pr-gate.yml')
+        message = textwrap.dedent(
+            workflow.split('          CLOSURE_MESSAGE: |\n',
+                           1)[1].split('        run: |', 1)[0]).strip()
+        heading = 'Pull Request Admission for External Contributors'
+        anchor = heading.lower().replace(' ', '-')
+        self.assertIn('### ' + heading, (ROOT / 'CONTRIBUTING.md').read_text())
+        self.assertEqual(
+            message,
+            'PRs from external contributors must link to an issue that a maintainer has labeled `ready`.\n\n'
+            'This PR does not currently meet that requirement. This is not a judgment on the quality of your contribution.\n\n'
+            'To continue, please work with maintainers to get the associated issue triaged and labeled `ready`, then link to it in the PR description.\n\n'
+            f'See [{heading}](https://github.com/kubeflow/pipelines/blob/master/CONTRIBUTING.md#{anchor}) for the updated contribution guidelines.',
+        )
+        script = textwrap.dedent(workflow.rsplit('        run: |\n', 1)[1])
+        fake_gh = '''
+        gh() {
+          case "$1 $2" in
+            'pr view') printf '%s' "$ISSUE_JSON" ;;
+            'issue view') printf '%s' "$LABELS_JSON" ;;
+            'pr comment') printf '%s' "$5" > "$COMMENT_FILE" ;;
+            'pr close') printf 'closed' > "$STATE_FILE" ;;
+            'pr edit') printf 'admitted' > "$STATE_FILE" ;;
+            *) return 99 ;;
+          esac
+        }
+        '''
+        cases = [([], [], 'closed'), ([{
+            'number': 123
+        }], [], 'closed'), ([{
+            'number': 123
+        }], [{
+            'name': 'ready'
+        }], 'admitted')]
+        for issues, labels, expected_state in cases:
+            with self.subTest(
+                    issues=issues,
+                    labels=labels), tempfile.TemporaryDirectory() as directory:
+                comment_file = Path(directory) / 'comment'
+                state_file = Path(directory) / 'state'
+                result = subprocess.run(
+                    ['bash', '-eo', 'pipefail', '-c', fake_gh + script],
+                    env={
+                        **os.environ,
+                        'PR_NUMBER':
+                            '456',
+                        'GITHUB_REPOSITORY':
+                            'kubeflow/pipelines',
+                        'CLOSURE_MESSAGE':
+                            message,
+                        'ISSUE_JSON':
+                            json.dumps({'closingIssuesReferences': issues}),
+                        'LABELS_JSON':
+                            json.dumps({'labels': labels}),
+                        'COMMENT_FILE':
+                            str(comment_file),
+                        'STATE_FILE':
+                            str(state_file),
+                    },
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                closed = expected_state == 'closed'
+                self.assertEqual(result.returncode, 1 if closed else 0,
+                                 result.stderr)
+                self.assertEqual(state_file.read_text(), expected_state)
+                self.assertEqual(comment_file.exists(), closed)
+                if closed:
+                    self.assertEqual(comment_file.read_text(), message)
+
+    def test_publisher_runs_trusted_code_without_pr_interpolation(self):
+        workflow = self._read_workflow('ci-checks.yml')
+        self.assertIn('ref: ${{ github.sha }}', workflow)
+        self.assertIn('persist-credentials: false', workflow)
+        self.assertNotIn('ref: ${{ github.event.pull_request.head', workflow)
+        self.assertNotIn('${{ github.event.label.name }}', workflow)
+        self.assertIn("poll: 'false'", workflow)
+        self.assertIn("delay: '0'", workflow)
+        self.assertIn('types: [requested, in_progress, completed]', workflow)
+        self.assertIn('reopened, edited, labeled', workflow)
+        selector = workflow.split('    workflows:',
+                                  1)[1].split('    types:', 1)[0]
+        self.assertNotIn("'CI Check'", selector)
+        self.assertIn("'Frontend Tests'", selector)
 
 
 if __name__ == '__main__':

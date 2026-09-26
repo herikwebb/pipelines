@@ -53,20 +53,11 @@ jobs:
           - name: kfp-viewer-crd-controller
             dockerfile: backend/Dockerfile.viewercontroller
             context: .
-          - name: kfp-visualization-server
-            dockerfile: backend/Dockerfile.visualization
-            context: .
           - name: kfp-launcher
             dockerfile: backend/Dockerfile.launcher
             context: .
           - name: kfp-driver
             dockerfile: backend/Dockerfile.driver
-            context: .
-          - name: kfp-cache-deployer
-            dockerfile: backend/src/cache/deployer/Dockerfile
-            context: .
-          - name: kfp-cache-server
-            dockerfile: backend/Dockerfile.cacheserver
             context: .
           - name: kfp-inverse-proxy-agent
             dockerfile: proxy/Dockerfile
@@ -112,11 +103,8 @@ jobs:
           - image: kfp-persistence-agent
           - image: kfp-scheduled-workflow-controller
           - image: kfp-viewer-crd-controller
-          - image: kfp-visualization-server
           - image: kfp-launcher
           - image: kfp-driver
-          - image: kfp-cache-deployer
-          - image: kfp-cache-server
           - image: kfp-inverse-proxy-agent
     uses: ./.github/workflows/create-manifest.yml
     secrets: inherit

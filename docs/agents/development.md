@@ -2,18 +2,19 @@
 
 ## Python setup
 
-Use a `.venv`:
+Use Python 3.11 or newer. Python 3.9 and 3.10 are no longer supported for current
+KFP packages or development. See the [migration guidance](../python-sdk.md#python-version-support).
+The uv workspace creates `.venv`:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip setuptools wheel
+uv sync --frozen --extra dev
 make -C api python-dev
 make -C kubernetes_platform python-dev
-pip install -e api/v2alpha1/python --config-settings editable_mode=strict
-pip install -e sdk/python --config-settings editable_mode=strict
-pip install -e kubernetes_platform/python --config-settings editable_mode=strict
 ```
+
+Package metadata lives in each workspace member's `pyproject.toml`; regenerate
+`uv.lock` with `uv lock` after dependency changes. Keep the exported requirements
+files synchronized using the commands in `.github/workflows/check-requirements-txt.yml`.
 
 Install Ginkgo into the repository when running its suites:
 
