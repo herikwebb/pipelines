@@ -359,5 +359,12 @@
         "tracking_issue": "https://github.com/herikwebb/pipelines/issues/164",
         "fix_branch": "security/fix-k8s-pipeline-list-namespace-scope-20260926133055-8191",
         "upstream_compare_url": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-k8s-pipeline-list-namespace-scope-20260926133055-8191?expand=1"
+    },
+    {
+        "title": "Cross-tenant metadata disclosure via the unauthenticated API server /metrics endpoint: the resource_manager_workflow_runs_success/failed gauges (backend/src/apiserver/resource/resource_manager.go) label every series with the run's namespace and workflow name, and the multi-user Istio policy admits identity-less in-cluster requests to ml-pipeline:8888, so any tenant pod can enumerate all profile namespaces and run names",
+        "status": "active",
+        "commit_hash": "7774d7b0d12dea8306f72c879ca0cf79a921145e",
+        "detected_at_pst": "2026-09-27T06:34:28-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/167"
     }
 ]
