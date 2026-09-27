@@ -66,14 +66,6 @@ const (
 
 // Metric variables. Please prefix the metric names with resource_manager_.
 var (
-	extraLabels = []string{
-		// display in which Kubeflow namespace the runs were triggered
-		"profile",
-
-		// display workflow name
-		"workflow",
-	}
-
 	// Count the removed workflows due to garbage collection.
 	workflowGCCounter = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "resource_manager_workflow_gc",
@@ -88,17 +80,20 @@ var (
 		Help: "The number of workflow reports rejected before persistence or garbage collection",
 	}, []string{"reason"})
 
-	// Count the successful workflow runs
-	workflowSuccessCounter = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	// Count the successful workflow runs. These gauges carry no per-tenant
+	// labels: /metrics is served unauthenticated on the API port, so
+	// namespace or run names in label values would be readable by any
+	// in-cluster client, and one series per run grows without bound.
+	workflowSuccessCounter = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "resource_manager_workflow_runs_success",
 		Help: "The current number of successful workflow runs",
-	}, extraLabels)
+	})
 
 	// Count the failed workflow runs
-	workflowFailedCounter = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	workflowFailedCounter = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "resource_manager_workflow_runs_failed",
 		Help: "The current number of failed workflow runs",
-	}, extraLabels)
+	})
 
 	// Gap in seconds between creating an execution spec (Argo or other backend) for a recurring run and reporting it via the persistence agent.
 	recurringPipelineRunReportGap = promauto.NewHistogram(prometheus.HistogramOpts{
@@ -1082,11 +1077,11 @@ func (r *ResourceManager) DeleteRun(ctx context.Context, runId string) error {
 	if r.options.CollectMetrics {
 		if run.Conditions == string(exec.ExecutionSucceeded) {
 			if util.GetMetricValue(workflowSuccessCounter) > 0 {
-				workflowSuccessCounter.WithLabelValues(run.Namespace, run.DisplayName).Dec()
+				workflowSuccessCounter.Dec()
 			}
 		} else {
 			if util.GetMetricValue(workflowFailedCounter) > 0 {
-				workflowFailedCounter.WithLabelValues(run.Namespace, run.DisplayName).Dec()
+				workflowFailedCounter.Dec()
 			}
 		}
 	}
@@ -2502,19 +2497,17 @@ func (r *ResourceManager) reportWorkflowResource(
 			)
 		}
 		if r.options.CollectMetrics {
-			execNamespace := execSpec.ExecutionNamespace()
-			execName := execSpec.ExecutionName()
 			if execStatus.Condition() == exec.ExecutionSucceeded {
-				workflowSuccessCounter.WithLabelValues(execNamespace, execName).Inc()
+				workflowSuccessCounter.Inc()
 			} else {
 				errorMsg := execStatus.Message()
 				if errorMsg == "" {
 					errorMsg = "(no error message available)"
 				}
-				glog.Errorf("pipeline '%s' finished with an error: %s", execName, errorMsg)
+				glog.Errorf("pipeline '%s' finished with an error: %s", execSpec.ExecutionName(), errorMsg)
 
 				// also collects counts regarding retries
-				workflowFailedCounter.WithLabelValues(execNamespace, execName).Inc()
+				workflowFailedCounter.Inc()
 			}
 		}
 	}
