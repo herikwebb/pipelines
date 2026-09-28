@@ -206,5 +206,18 @@
         "affected_version": "2.32.5",
         "fixed_version": "2.33.0",
         "severity": "medium"
+    },
+    {
+        "title": "CVE-2026-45409 (GHSA-65pc-fj4g-8rjx, PYSEC-2026-215) pypi:idna 3.11 resource-exhaustion DoS in idna.encode() on crafted long inputs (incomplete fix of CVE-2024-3651); pinned in uv.lock and the generated requirements.txt files, reachable via requests/urllib3 hostname handling in the kfp SDK client; covered by in-flight upstream Dependabot bumps (dependabot/uv/idna-3.15 and dependabot/uv/idna-3.20)",
+        "status": "active",
+        "commit_hash": "0f6b4fb436f90458c9aea80cbff122107d78c642",
+        "detected_at_pst": "2026-09-28T06:31:49-07:00",
+        "reported_link": "https://github.com/kubeflow/pipelines/tree/dependabot/uv/idna-3.20",
+        "cve_id": "CVE-2026-45409",
+        "ghsa_id": "GHSA-65pc-fj4g-8rjx",
+        "package": "pypi:idna",
+        "affected_version": "3.11",
+        "fixed_version": "3.15",
+        "severity": "medium"
     }
 ]
