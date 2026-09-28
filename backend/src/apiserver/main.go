@@ -372,6 +372,43 @@ func grpcCustomMatcher(key string) (string, bool) {
 // buffering on mutable fields, though it allows updating full pipeline objects.
 const MaxUpdateRequestBodySize = 32 << 20
 
+// MaxAPIRequestBodySize is the maximum size (64 MiB) of any request body
+// accepted on the /apis/ routes and of any gRPC message accepted by the RPC
+// server. The grpc-gateway JSON marshaler buffers the whole body before the
+// handler authenticates the caller, so the ceiling bounds memory an
+// unauthenticated client can make the server allocate. It is twice
+// common.MaxFileLength, which bounds uploaded pipeline files.
+const MaxAPIRequestBodySize = 64 << 20
+
+// writeRequestTooLargeResponse writes the grpc-gateway style JSON error for a
+// request body that exceeds the configured ceiling.
+func writeRequestTooLargeResponse(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusRequestEntityTooLarge)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"code":    3, // InvalidArgument
+		"message": "Request body too large",
+	})
+}
+
+// limitRequestBodyMiddleware bounds the request body of every /apis/ route to
+// MaxAPIRequestBodySize. A declared Content-Length above the ceiling is
+// rejected with 413 before any byte is read; otherwise the body is wrapped in
+// http.MaxBytesReader so that streamed or chunked bodies fail once the ceiling
+// is reached instead of being buffered in full by the gRPC gateway.
+func limitRequestBodyMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > MaxAPIRequestBodySize {
+			writeRequestTooLargeResponse(w)
+			return
+		}
+		if r.Body != nil && r.Body != http.NoBody {
+			r.Body = http.MaxBytesReader(w, r.Body, MaxAPIRequestBodySize)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func clearTagsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if (r.Method == http.MethodPut || r.Method == http.MethodPatch) && r.Body != nil &&
@@ -385,11 +422,7 @@ func clearTagsMiddleware(next http.Handler) http.Handler {
 				w.Header().Set("Content-Type", "application/json")
 				var maxBytesErr *http.MaxBytesError
 				if errors.As(err, &maxBytesErr) {
-					w.WriteHeader(http.StatusRequestEntityTooLarge)
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"code":    3, // InvalidArgument
-						"message": "Request body too large",
-					})
+					writeRequestTooLargeResponse(w)
 				} else {
 					w.WriteHeader(http.StatusBadRequest)
 					json.NewEncoder(w).Encode(map[string]interface{}{
@@ -437,14 +470,14 @@ func startRPCServer(resourceManager *resource.ResourceManager, tlsCfg *tls.Confi
 				grpc_prometheus.UnaryServerInterceptor,
 				apiServerInterceptor,
 			),
-			grpc.MaxRecvMsgSize(math.MaxInt32),
+			grpc.MaxRecvMsgSize(MaxAPIRequestBodySize),
 		)
 	} else {
 		glog.Info("Starting RPC server")
 		s = grpc.NewServer(grpc.ChainUnaryInterceptor(
 			grpc_prometheus.UnaryServerInterceptor,
 			apiServerInterceptor,
-		), grpc.MaxRecvMsgSize(math.MaxInt32))
+		), grpc.MaxRecvMsgSize(MaxAPIRequestBodySize))
 	}
 
 	listener, err := net.Listen("tcp", *rpcPortFlag)
@@ -569,7 +602,7 @@ func buildHTTPRouter(handlerDeps HTTPRouterDeps, grpcGatewayHandler http.Handler
 	// Artifact reading endpoints (implemented with streaming for memory efficiency)
 	topMux.HandleFunc("/apis/v2beta1/runs/{run_id}/nodes/{node_id}/artifacts/{artifact_name}:read", handlerDeps.ReadArtifact).Methods(http.MethodGet)
 
-	topMux.PathPrefix("/apis/").Handler(clearTagsMiddleware(grpcGatewayHandler))
+	topMux.PathPrefix("/apis/").Handler(limitRequestBodyMiddleware(clearTagsMiddleware(grpcGatewayHandler)))
 
 	// Register a handler for Prometheus to poll.
 	// This must be unconditional because grpc_prometheus interceptors and Go
