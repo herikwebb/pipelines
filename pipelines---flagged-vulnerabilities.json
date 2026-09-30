@@ -325,7 +325,7 @@
         "upstream_compare_url": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-tensorboard-proxy-credential-forwarding-20260923134643-8319?expand=1"
     },
     {
-        "title": "Pre-authentication memory-exhaustion DoS in the KFP API server: buildHTTPRouter (backend/src/apiserver/main.go) proxies every /apis/ request to the grpc-gateway with no body limit (only PUT/PATCH pipeline updates are capped) and startRPCServer sets grpc.MaxRecvMsgSize(math.MaxInt32), so the JSONPb marshaler buffers multi-GB bodies before any TokenReview/SAR; any tenant pod or unauthenticated in-cluster client reaching ml-pipeline:8888/8887 (Istio admits requests without kubeflow-userid) can OOM the shared API server - fork PR open, upstream via private channel (SECURITY.md)",
+        "title": "Pre-authentication memory-exhaustion DoS in the KFP API server: buildHTTPRouter (backend/src/apiserver/main.go) proxies every /apis/ request to the grpc-gateway with no body limit (only PUT/PATCH pipeline updates are capped) and startRPCServer sets grpc.MaxRecvMsgSize(math.MaxInt32), so the JSONPb marshaler buffers multi-GB bodies before any TokenReview/SAR; any tenant pod or unauthenticated in-cluster client reaching ml-pipeline:8888/8887 (Istio admits requests without kubeflow-userid) can OOM the shared API server - fork PR open, upstream via private channel (SECURITY.md) - 2026-09-30 follow-up commit d6722d1 on the same PR also wraps the four multipart pipeline upload routes, which are registered ahead of the /apis/ prefix handler and were left uncapped (they spool the multipart body to disk before authorizing)",
         "status": "active",
         "commit_hash": "1caef56d3426286c68da1dddd6586ce1e00de784",
         "detected_at_pst": "2026-09-25T06:36:15-07:00",
@@ -366,5 +366,29 @@
         "commit_hash": "7774d7b0d12dea8306f72c879ca0cf79a921145e",
         "detected_at_pst": "2026-09-27T06:34:28-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/167"
+    },
+    {
+        "title": "Unauthenticated in-cluster read of shared pipelines and their specs in multi-user mode: authorizePipelineAccessAndGet (backend/src/apiserver/server/pipeline_server.go) returns success for get/list on an empty-namespace pipeline before any authenticator runs (IsAuthorized is the only place identity is resolved), and the multi-user Istio policy admits requests without a kubeflow-userid header, so any pod with no KFP identity can GET /apis/v2beta1/pipelines and /pipelines/{id}/versions and receive every shared pipeline and each version's full pipeline_spec - fork PR open (issue #168 labeled ready), upstream via private channel (SECURITY.md); GHSA draft creation on the fork denied by the proxy",
+        "status": "active",
+        "commit_hash": "7ced582758d3c2854f436158ecb54f67066758b7",
+        "detected_at_pst": "2026-09-30T06:45:50-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/170",
+        "primary_location": "backend/src/apiserver/server/pipeline_server.go"
+    },
+    {
+        "title": "HTML injection in kfp.Client notebook detail links: create_experiment, run_pipeline, upload_pipeline and upload_pipeline_version (sdk/python/kfp/client/client.py) build IPython.display.HTML anchors with f-strings that embed the experiment/run/pipeline/version ids returned by the API server unescaped, so a malicious or spoofed API endpoint (default client endpoint is plain http) returns an id with markup that the notebook frontend renders as trusted kernel output and executes in the user's notebook session - fork PR open (issue #169 labeled ready), upstream via private channel (SECURITY.md)",
+        "status": "active",
+        "commit_hash": "7ced582758d3c2854f436158ecb54f67066758b7",
+        "detected_at_pst": "2026-09-30T06:45:50-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/171",
+        "primary_location": "sdk/python/kfp/client/client.py"
+    },
+    {
+        "title": "Tenant-controlled active content served same-origin by the ml-pipeline-ui TensorBoard proxy: registerTensorboardProxy (frontend/server/handlers/tensorboard-proxy.ts) relays the viewer pod's HTTP responses to the victim's browser under the UI origin with no CSP/sandbox/Content-Type hardening, and the tenant chooses the viewer image (POST /apps/tensorboard image=, a Viewer CR, or the namespace Service the proxy targets), so a victim with GET viewers in the attacker's namespace (co-contributor or admin) who opens the signed proxy link runs attacker script that can call every /apis and /artifacts route as the victim - RECORDED, NOT FILED: architectural (any same-origin proxy to a tenant-owned Service has this property; an image allowlist does not stop Service replacement and a CSP sandbox breaks TensorBoard's credentialed fetches), so no minimal fix; needs a dedicated proxy origin, to be raised upstream via SECURITY.md",
+        "status": "active",
+        "commit_hash": "7ced582758d3c2854f436158ecb54f67066758b7",
+        "detected_at_pst": "2026-09-30T06:45:50-07:00",
+        "reported_link": "",
+        "primary_location": "frontend/server/handlers/tensorboard-proxy.ts"
     }
 ]
