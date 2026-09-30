@@ -648,14 +648,17 @@ func buildHTTPRouter(handlerDeps HTTPRouterDeps, grpcGatewayHandler http.Handler
 	// accept pipeline url for importing.
 	// https://github.com/grpc-ecosystem/grpc-gateway/issues/410
 	// API v1beta1
-	topMux.HandleFunc("/apis/v1beta1/pipelines/upload", handlerDeps.UploadPipelineV1)
-	topMux.HandleFunc("/apis/v1beta1/pipelines/upload_version", handlerDeps.UploadPipelineVersionV1)
+	// The upload handlers parse the multipart body (spooling large parts to
+	// disk) before they authorize the caller, so they get the same body ceiling
+	// as the gRPC gateway routes below.
+	topMux.Handle("/apis/v1beta1/pipelines/upload", limitRequestBodyMiddleware(http.HandlerFunc(handlerDeps.UploadPipelineV1)))
+	topMux.Handle("/apis/v1beta1/pipelines/upload_version", limitRequestBodyMiddleware(http.HandlerFunc(handlerDeps.UploadPipelineVersionV1)))
 	topMux.HandleFunc("/apis/v1beta1/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, newHealthzResponse(""))
 	})
 	// API v2beta1
-	topMux.HandleFunc("/apis/v2beta1/pipelines/upload", handlerDeps.UploadPipeline)
-	topMux.HandleFunc("/apis/v2beta1/pipelines/upload_version", handlerDeps.UploadPipelineVersion)
+	topMux.Handle("/apis/v2beta1/pipelines/upload", limitRequestBodyMiddleware(http.HandlerFunc(handlerDeps.UploadPipeline)))
+	topMux.Handle("/apis/v2beta1/pipelines/upload_version", limitRequestBodyMiddleware(http.HandlerFunc(handlerDeps.UploadPipelineVersion)))
 	topMux.HandleFunc("/apis/v2beta1/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, newHealthzResponse(pipelineStore))
 	})

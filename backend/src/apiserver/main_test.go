@@ -973,6 +973,42 @@ func TestBuildHTTPRouter_GatewayBodyIsBounded(t *testing.T) {
 	assert.False(t, gatewayHandlerCalled, "oversized bodies must be rejected before reaching the gRPC gateway")
 }
 
+func TestBuildHTTPRouter_UploadBodiesAreBounded(t *testing.T) {
+	uploadRoutes := []string{
+		"/apis/v1beta1/pipelines/upload",
+		"/apis/v1beta1/pipelines/upload_version",
+		"/apis/v2beta1/pipelines/upload",
+		"/apis/v2beta1/pipelines/upload_version",
+	}
+	for _, route := range uploadRoutes {
+		t.Run(route, func(t *testing.T) {
+			handlerCalled := false
+			uploadHandler := func(w http.ResponseWriter, r *http.Request) {
+				handlerCalled = true
+				w.WriteHeader(http.StatusOK)
+			}
+			handlerDeps := HTTPRouterDeps{
+				UploadPipelineV1:        uploadHandler,
+				UploadPipelineVersionV1: uploadHandler,
+				UploadPipeline:          uploadHandler,
+				UploadPipelineVersion:   uploadHandler,
+				ReadRunLogV1:            noOpHandler,
+				ReadArtifactV1:          noOpHandler,
+				ReadArtifact:            noOpHandler,
+			}
+			router := buildHTTPRouter(handlerDeps, http.HandlerFunc(noOpHandler), "database")
+
+			request := httptest.NewRequest(http.MethodPost, route, strings.NewReader("{}"))
+			request.ContentLength = MaxAPIRequestBodySize + 1
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+
+			assert.Equal(t, http.StatusRequestEntityTooLarge, recorder.Code)
+			assert.False(t, handlerCalled, "oversized upload bodies must be rejected before the multipart body is parsed")
+		})
+	}
+}
+
 func TestBuildHTTPRouter_UnmatchedAPIsGoToGateway(t *testing.T) {
 	gatewayHandlerCalled := false
 	gatewayHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
