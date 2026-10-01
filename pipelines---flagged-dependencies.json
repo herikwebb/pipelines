@@ -219,5 +219,44 @@
         "affected_version": "3.11",
         "fixed_version": "3.15",
         "severity": "medium"
+    },
+    {
+        "title": "CVE-2026-97687 (GHSA-8988-9cw3-xx77) pypi:urllib3 2.7.0 HTTPS-proxy TLS context/verification confusion (proxy_ssl_context ignored or overridden by target TLS settings); pinned in requirements.txt, sdk/python and kubernetes_platform requirements and uv.lock, used by kfp.Client/kfp_server_api and the kubernetes client - covered by in-flight upstream Dependabot PR bumping to 2.8.0",
+        "status": "active",
+        "commit_hash": "fb3e0efd029376b951e9fab91e1b8bd61f305a7a",
+        "detected_at_pst": "2026-10-01T06:45:42-07:00",
+        "reported_link": "https://github.com/kubeflow/pipelines/pull/14638",
+        "cve_id": "CVE-2026-97687",
+        "ghsa_id": "GHSA-8988-9cw3-xx77",
+        "package": "pypi:urllib3",
+        "affected_version": "2.7.0",
+        "fixed_version": "2.8.0",
+        "severity": "high"
+    },
+    {
+        "title": "CVE-2026-97688 (GHSA-gh4c-6fx4-qh6g) pypi:urllib3 2.7.0 infinite loop decoding a chunked Deflate response with trailing bytes on the streaming API (DoS); pinned in requirements.txt, sdk/python and kubernetes_platform requirements and uv.lock, used by kfp.Client/kfp_server_api and the kubernetes client - covered by in-flight upstream Dependabot PR bumping to 2.8.0",
+        "status": "active",
+        "commit_hash": "fb3e0efd029376b951e9fab91e1b8bd61f305a7a",
+        "detected_at_pst": "2026-10-01T06:45:42-07:00",
+        "reported_link": "https://github.com/kubeflow/pipelines/pull/14638",
+        "cve_id": "CVE-2026-97688",
+        "ghsa_id": "GHSA-gh4c-6fx4-qh6g",
+        "package": "pypi:urllib3",
+        "affected_version": "2.7.0",
+        "fixed_version": "2.8.0",
+        "severity": "medium"
+    },
+    {
+        "title": "CVE-2026-97689 (GHSA-vxq7-64xx-v4gw) pypi:urllib3 2.7.0 unbounded buffering of an over-long chunk-size line on the streaming API (memory DoS); pinned in requirements.txt, sdk/python and kubernetes_platform requirements and uv.lock, used by kfp.Client/kfp_server_api and the kubernetes client - covered by in-flight upstream Dependabot PR bumping to 2.8.0",
+        "status": "active",
+        "commit_hash": "fb3e0efd029376b951e9fab91e1b8bd61f305a7a",
+        "detected_at_pst": "2026-10-01T06:45:42-07:00",
+        "reported_link": "https://github.com/kubeflow/pipelines/pull/14638",
+        "cve_id": "CVE-2026-97689",
+        "ghsa_id": "GHSA-vxq7-64xx-v4gw",
+        "package": "pypi:urllib3",
+        "affected_version": "2.7.0",
+        "fixed_version": "2.8.0",
+        "severity": "high"
     }
 ]
