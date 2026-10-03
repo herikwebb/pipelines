@@ -390,5 +390,13 @@
         "detected_at_pst": "2026-09-30T06:45:50-07:00",
         "reported_link": "",
         "primary_location": "frontend/server/handlers/tensorboard-proxy.ts"
+    },
+    {
+        "title": "Service-account authorization bypass on recurring-run enable in multi-user mode: after #14363 CreateJob stores a generic ScheduledWorkflow with no embedded workflow, and ResourceManager.ChangeJobMode only re-authorizes service accounts when Spec.Workflow is embedded, so a namespace member with jobs/enable but without serviceaccounts/use can re-enable a disabled (revoked) schedule whose ticks then run under the privileged SA via the controller identity (PrepareRecurringRun copies job.ServiceAccount)",
+        "status": "active",
+        "commit_hash": "0f6840403dd2060f9c978574c3e51a74b410e1ab",
+        "detected_at_pst": "2026-10-03T06:26:50-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/174",
+        "primary_location": "backend/src/apiserver/resource/resource_manager.go"
     }
 ]
