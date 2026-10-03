@@ -50,6 +50,7 @@ import (
 	swfapi "github.com/kubeflow/pipelines/backend/src/crd/pkg/apis/scheduledworkflow/v1beta1"
 	swfclientv1beta1 "github.com/kubeflow/pipelines/backend/src/crd/pkg/client/clientset/versioned/typed/scheduledworkflow/v1beta1"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -5900,6 +5901,18 @@ func TestReportWorkflowResource_FinalizesV2RunWhenWorkflowDeletedBeforeFirstRepo
 	assert.NotEmpty(t, currentRun.WorkflowRuntimeManifest)
 	assert.Equal(t, rejectionsBefore, counterValue(),
 		"an accepted stored-identity fallback must not be counted as a rejected report")
+}
+
+func TestWorkflowRunGaugesCarryNoTenantLabels(t *testing.T) {
+	for name, gauge := range map[string]prometheus.Gauge{
+		"resource_manager_workflow_runs_success": workflowSuccessCounter,
+		"resource_manager_workflow_runs_failed":  workflowFailedCounter,
+	} {
+		metric := &dto.Metric{}
+		require.NoError(t, gauge.Write(metric))
+		assert.Empty(t, metric.GetLabel(),
+			"%s must not expose namespace or run names on the unauthenticated /metrics endpoint", name)
+	}
 }
 
 func TestRecordWorkflowReportLiveLookupRejectionIgnoresRetryableErrors(t *testing.T) {
