@@ -177,3 +177,42 @@ describe('getPodLogsHandler stream failures', () => {
     expect(pipeLogs).not.toHaveBeenCalled();
   });
 });
+
+describe('getPodLogsHandler authorization', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('asks for READ_LOG on the pod namespace before reading logs', async () => {
+    const logs = new PassThrough();
+    getPodLogsStream.mockResolvedValue(logs);
+    const authorizeFn = vi.fn().mockResolvedValue(undefined);
+    const handler = getPodLogsHandler(
+      {
+        archiveArtifactory: 'minio',
+        archiveBucketName: '',
+        archiveLogs: false,
+        artifactRepositoriesLookup: false,
+        keyFormat: '',
+      },
+      {
+        aws: { endPoint: 's3.amazonaws.com' },
+        minio: { endPoint: 'minio-service.kubeflow' },
+      },
+      'main',
+      authorizeFn as unknown as AuthorizeFn,
+      true,
+    );
+    const request = {
+      query: { podname: 'pod-1', podnamespace: 'ns1' },
+    } as unknown as Request;
+
+    await handler(request, makeResponse(), vi.fn());
+
+    expect(authorizeFn).toHaveBeenCalledWith(
+      { verb: 'READ_LOG', resources: 'VIEWERS', namespace: 'ns1' },
+      request,
+    );
+    logs.end();
+  });
+});

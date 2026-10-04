@@ -79,6 +79,9 @@ message AuthorizeRequest {
     CREATE = 1;
     GET = 2;
     DELETE = 3;
+    // Read pod logs, pod specs and pod events of pipeline runs. Unlike GET, it is
+    // never auto-approved by shared read mode.
+    READ_LOG = 4;
   }
   string namespace = 1;    // Namespace the resource belongs to.
   Resources resources = 2; // Resource type asking for authorization.

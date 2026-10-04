@@ -60,7 +60,7 @@
           },
           {
             "name": "verb",
-            "description": "Verb on the resource asking for authorization.",
+            "description": "Verb on the resource asking for authorization.\n\n - READ_LOG: Read pod logs, pod specs and pod events of pipeline runs. Unlike GET, it is\nnever auto-approved by shared read mode.",
             "in": "query",
             "required": false,
             "type": "string",
@@ -68,7 +68,8 @@
               "UNASSIGNED_VERB",
               "CREATE",
               "GET",
-              "DELETE"
+              "DELETE",
+              "READ_LOG"
             ],
             "default": "UNASSIGNED_VERB"
           }
@@ -95,10 +96,11 @@
         "UNASSIGNED_VERB",
         "CREATE",
         "GET",
-        "DELETE"
+        "DELETE",
+        "READ_LOG"
       ],
       "default": "UNASSIGNED_VERB",
-      "description": "Type of verbs that act on the resources."
+      "description": "Type of verbs that act on the resources.\n\n - READ_LOG: Read pod logs, pod specs and pod events of pipeline runs. Unlike GET, it is\nnever auto-approved by shared read mode."
     },
     "googleRpcStatus": {
       "type": "object",
