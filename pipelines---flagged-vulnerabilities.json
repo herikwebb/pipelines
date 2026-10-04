@@ -398,5 +398,15 @@
         "detected_at_pst": "2026-10-03T06:26:50-07:00",
         "reported_link": "https://github.com/herikwebb/pipelines/pull/174",
         "primary_location": "backend/src/apiserver/resource/resource_manager.go"
+    },
+    {
+        "title": "Cross-namespace pod log, pod spec and event disclosure in shared read mode: ml-pipeline-ui /k8s/pod/logs, /k8s/pod and /k8s/pod/events authorize only GET viewers via the AuthService, which ResourceManager.IsAuthorized auto-approves when MULTIUSER_SHARED_READ is on, and then read with the UI's cluster-wide ServiceAccount",
+        "status": "active",
+        "commit_hash": "2c9943d2950a0fdcdeb641c6f89a6b28668422f9",
+        "detected_at_pst": "2026-10-04T06:35:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/175",
+        "primary_location": "frontend/server/handlers/pod-logs.ts",
+        "severity": "medium",
+        "evidence": "pod-logs.ts/pod-info.ts authorizeFn({verb: GET, resources: VIEWERS, namespace: podnamespace}) -> auth_server.go Authorize -> resource_manager.go IsAuthorized returns nil for get/list in shared read mode -> k8s-helper readNamespacedPodLog/readNamespacedPod/listNamespacedEvent with UI SA; contradicts rbac-migration-2.18.md and run_log_server.go readLog verb. Fix: READ_LOG AuthorizeRequest verb mapped to runs/readLog. Upstream compare: https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-ui-pod-log-shared-read-authz-20261004132111-7212?expand=1 (private disclosure per SECURITY.md)"
     }
 ]
