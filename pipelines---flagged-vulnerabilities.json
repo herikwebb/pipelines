@@ -408,5 +408,14 @@
         "primary_location": "frontend/server/handlers/pod-logs.ts",
         "severity": "medium",
         "evidence": "pod-logs.ts/pod-info.ts authorizeFn({verb: GET, resources: VIEWERS, namespace: podnamespace}) -> auth_server.go Authorize -> resource_manager.go IsAuthorized returns nil for get/list in shared read mode -> k8s-helper readNamespacedPodLog/readNamespacedPod/listNamespacedEvent with UI SA; contradicts rbac-migration-2.18.md and run_log_server.go readLog verb. Fix: READ_LOG AuthorizeRequest verb mapped to runs/readLog. Upstream compare: https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-ui-pod-log-shared-read-authz-20261004132111-7212?expand=1 (private disclosure per SECURITY.md)"
+    },
+    {
+        "title": "Session credential forwarding in the ml-pipeline-ui artifact proxy: getArtifactsProxyHandler (frontend/server/handlers/artifacts.ts) forwards the viewer's Cookie, Authorization and kubeflow-userid headers unchanged to the tenant-namespace ml-pipeline-ui-artifact Service (selector app=ml-pipeline-ui-artifact, which a kubeflow-edit tenant can back with their own pod) when ARTIFACTS_SERVICE_PROXY_ENABLED=true, letting the tenant capture and replay a co-contributor's or admin's session",
+        "status": "active",
+        "commit_hash": "4b93e262d50e541e15030965a7327b80e1d9d29e",
+        "detected_at_pst": "2026-10-05T06:26:33-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/176",
+        "primary_location": "frontend/server/handlers/artifacts.ts",
+        "severity": "medium"
     }
 ]
