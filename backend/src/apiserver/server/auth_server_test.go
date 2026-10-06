@@ -169,3 +169,42 @@ func TestAuthorizeRequest_Unauthenticated(t *testing.T) {
 		"there is no user identity header",
 	)
 }
+
+func TestAuthorizeRequest_ReadLogIsNotSharedRead(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+	viper.Set(common.MultiUserModeSharedReadAccess, "true")
+	defer viper.Set(common.MultiUserModeSharedReadAccess, "false")
+
+	clients, manager, _ := initWithExperiment_SubjectAccessReview_Unauthorized(t)
+	defer clients.Close()
+	authServer := AuthServer{resourceManager: manager}
+
+	userIdentity := "user@google.com"
+	md := metadata.New(map[string]string{common.GoogleIAPUserIdentityHeader: common.GoogleIAPUserIdentityPrefix + userIdentity})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	// Shared read mode still auto-approves GET.
+	_, err := authServer.Authorize(ctx, &api.AuthorizeRequest{
+		Namespace: "ns1",
+		Resources: api.AuthorizeRequest_VIEWERS,
+		Verb:      api.AuthorizeRequest_GET,
+	})
+	assert.Nil(t, err)
+
+	// READ_LOG is checked against runs/readLog with a SubjectAccessReview.
+	_, err = authServer.Authorize(ctx, &api.AuthorizeRequest{
+		Namespace: "ns1",
+		Resources: api.AuthorizeRequest_VIEWERS,
+		Verb:      api.AuthorizeRequest_READ_LOG,
+	})
+	assert.Error(t, err)
+	resourceAttributes := &authorizationv1.ResourceAttributes{
+		Namespace: "ns1",
+		Verb:      common.RbacResourceVerbReadLog,
+		Group:     common.RbacPipelinesGroup,
+		Version:   common.RbacPipelinesVersion,
+		Resource:  common.RbacResourceTypeRuns,
+	}
+	assert.EqualError(t, err, wrapFailedAuthzRequestError(getPermissionDeniedError(userIdentity, resourceAttributes)).Error())
+}

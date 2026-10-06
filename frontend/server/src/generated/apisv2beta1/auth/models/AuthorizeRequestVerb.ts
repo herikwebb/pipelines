@@ -14,6 +14,9 @@
 
 /**
  * Type of verbs that act on the resources.
+ *
+ *  - READ_LOG: Read pod logs, pod specs and pod events of pipeline runs. Unlike GET, it is
+ * never auto-approved by shared read mode.
  * @export
  */
 export const AuthorizeRequestVerb = {
@@ -21,6 +24,7 @@ export const AuthorizeRequestVerb = {
   CREATE: 'CREATE',
   GET: 'GET',
   DELETE: 'DELETE',
+  READ_LOG: 'READ_LOG',
 } as const;
 export type AuthorizeRequestVerb = (typeof AuthorizeRequestVerb)[keyof typeof AuthorizeRequestVerb];
 

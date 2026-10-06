@@ -115,7 +115,7 @@ export function getPodLogsHandler(
       try {
         const authError = await authorizeFn(
           {
-            verb: AuthorizeVerbEnum.GET,
+            verb: AuthorizeVerbEnum.READ_LOG,
             resources: AuthorizeResourcesEnum.VIEWERS,
             namespace: podNamespace,
           },

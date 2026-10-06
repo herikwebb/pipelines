@@ -32,8 +32,9 @@ class AuthorizeRequestVerb(object):
     CREATE = "CREATE"
     GET = "GET"
     DELETE = "DELETE"
+    READ_LOG = "READ_LOG"
 
-    allowable_values = [UNASSIGNED_VERB, CREATE, GET, DELETE]  # noqa: E501
+    allowable_values = [UNASSIGNED_VERB, CREATE, GET, DELETE, READ_LOG]  # noqa: E501
 
     """
     Attributes:

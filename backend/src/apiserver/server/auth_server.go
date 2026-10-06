@@ -59,6 +59,14 @@ func (s *AuthServer) Authorize(ctx context.Context, request *api.AuthorizeReques
 		Subresource: "",
 		Name:        "",
 	}
+	// Pod logs, specs and events are read with the UI server's own credentials.
+	// Check them against runs/readLog, like the API server's run log endpoint, so
+	// shared read mode (which auto-approves get/list) does not expose them.
+	if request.GetVerb() == api.AuthorizeRequest_READ_LOG {
+		resourceAttributes.Verb = common.RbacResourceVerbReadLog
+		resourceAttributes.Group = common.RbacPipelinesGroup
+		resourceAttributes.Resource = common.RbacResourceTypeRuns
+	}
 	err = s.resourceManager.IsAuthorized(ctx, resourceAttributes)
 	if err != nil {
 		return nil, util.Wrap(err, "Failed to authorize the request")

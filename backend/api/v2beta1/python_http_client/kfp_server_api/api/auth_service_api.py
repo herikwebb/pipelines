@@ -49,7 +49,7 @@ class AuthServiceApi(object):
         :type namespace: str
         :param resources: Resource type asking for authorization.
         :type resources: str
-        :param verb: Verb on the resource asking for authorization.
+        :param verb: Verb on the resource asking for authorization.   - READ_LOG: Read pod logs, pod specs and pod events of pipeline runs. Unlike GET, it is never auto-approved by shared read mode.
         :type verb: str
         :param async_req: Whether to execute the request asynchronously.
         :type async_req: bool, optional
@@ -81,7 +81,7 @@ class AuthServiceApi(object):
         :type namespace: str
         :param resources: Resource type asking for authorization.
         :type resources: str
-        :param verb: Verb on the resource asking for authorization.
+        :param verb: Verb on the resource asking for authorization.   - READ_LOG: Read pod logs, pod specs and pod events of pipeline runs. Unlike GET, it is never auto-approved by shared read mode.
         :type verb: str
         :param async_req: Whether to execute the request asynchronously.
         :type async_req: bool, optional

@@ -93,6 +93,9 @@ const (
 	AuthorizeRequest_CREATE          AuthorizeRequest_Verb = 1
 	AuthorizeRequest_GET             AuthorizeRequest_Verb = 2
 	AuthorizeRequest_DELETE          AuthorizeRequest_Verb = 3
+	// Read pod logs, pod specs and pod events of pipeline runs. Unlike GET, it is
+	// never auto-approved by shared read mode.
+	AuthorizeRequest_READ_LOG AuthorizeRequest_Verb = 4
 )
 
 // Enum value maps for AuthorizeRequest_Verb.
@@ -102,12 +105,14 @@ var (
 		1: "CREATE",
 		2: "GET",
 		3: "DELETE",
+		4: "READ_LOG",
 	}
 	AuthorizeRequest_Verb_value = map[string]int32{
 		"UNASSIGNED_VERB": 0,
 		"CREATE":          1,
 		"GET":             2,
 		"DELETE":          3,
+		"READ_LOG":        4,
 	}
 )
 
@@ -205,21 +210,22 @@ var File_backend_api_v2beta1_auth_proto protoreflect.FileDescriptor
 
 const file_backend_api_v2beta1_auth_proto_rawDesc = "" +
 	"\n" +
-	"\x1ebackend/api/v2beta1/auth.proto\x12&kubeflow.pipelines.backend.api.v2beta1\x1a\x1cgoogle/api/annotations.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a.protoc-gen-openapiv2/options/annotations.proto\"\xd7\x02\n" +
+	"\x1ebackend/api/v2beta1/auth.proto\x12&kubeflow.pipelines.backend.api.v2beta1\x1a\x1cgoogle/api/annotations.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a.protoc-gen-openapiv2/options/annotations.proto\"\xe5\x02\n" +
 	"\x10AuthorizeRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12`\n" +
 	"\tresources\x18\x02 \x01(\x0e2B.kubeflow.pipelines.backend.api.v2beta1.AuthorizeRequest.ResourcesR\tresources\x12Q\n" +
 	"\x04verb\x18\x03 \x01(\x0e2=.kubeflow.pipelines.backend.api.v2beta1.AuthorizeRequest.VerbR\x04verb\"2\n" +
 	"\tResources\x12\x18\n" +
 	"\x14UNASSIGNED_RESOURCES\x10\x00\x12\v\n" +
-	"\aVIEWERS\x10\x01\"<\n" +
+	"\aVIEWERS\x10\x01\"J\n" +
 	"\x04Verb\x12\x13\n" +
 	"\x0fUNASSIGNED_VERB\x10\x00\x12\n" +
 	"\n" +
 	"\x06CREATE\x10\x01\x12\a\n" +
 	"\x03GET\x10\x02\x12\n" +
 	"\n" +
-	"\x06DELETE\x10\x032\x88\x01\n" +
+	"\x06DELETE\x10\x03\x12\f\n" +
+	"\bREAD_LOG\x10\x042\x88\x01\n" +
 	"\vAuthService\x12y\n" +
 	"\tAuthorize\x128.kubeflow.pipelines.backend.api.v2beta1.AuthorizeRequest\x1a\x16.google.protobuf.Empty\"\x1a\x82\xd3\xe4\x93\x02\x14\x12\x12/apis/v2beta1/authB\x98\x01\x92AX*\x02\x01\x02R#\n" +
 	"\adefault\x12\x18\x12\x16\n" +

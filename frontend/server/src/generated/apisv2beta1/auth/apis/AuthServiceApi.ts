@@ -100,5 +100,6 @@ export const AuthorizeVerbEnum = {
   CREATE: 'CREATE',
   GET: 'GET',
   DELETE: 'DELETE',
+  READ_LOG: 'READ_LOG',
 } as const;
 export type AuthorizeVerbEnum = (typeof AuthorizeVerbEnum)[keyof typeof AuthorizeVerbEnum];
