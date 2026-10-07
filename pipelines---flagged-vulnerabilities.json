@@ -310,7 +310,10 @@
         "fix_branch": "security/fix-run-artifact-key-namespace-scope-20260922132028-1282",
         "upstream_compare_url": "https://github.com/kubeflow/pipelines/compare/master...herikwebb:security/fix-run-artifact-key-namespace-scope-20260922132028-1282?expand=1",
         "severity": "high",
-        "fork_pr": "https://github.com/herikwebb/pipelines/pull/157"
+        "fork_pr": "https://github.com/herikwebb/pipelines/pull/157",
+        "additional_vectors": [
+            "2026-10-07 (upstream 456fab1d): self-service namespace import (#14658, POST /apis/v2beta1/transfer/import) stores an archive-supplied WorkflowRuntimeManifest on imported runs; ReadLog sends imported runs straight to readRunLogFromArchive and ResolveArtifactPath reads the same manifest, so any tenant with create on KFP resources in their own namespace can plant arbitrary status artifact keys without Workflow edit rights. Same sink/primary location; the retained fix branch's validateArtifactKeyOwnedByRun keys off run.Namespace, which import validation pins to the destination namespace, so the existing fix also closes this vector - not filed separately."
+        ]
     },
     {
         "title": "Credential forwarding in the ml-pipeline-ui TensorBoard proxy: registerTensorboardProxy (frontend/server/handlers/tensorboard-proxy.ts) proxies to the tenant-namespace viewer service with no proxyReq/proxyRes hooks, so the victim's oauth2-proxy session cookie, Authorization bearer token and kubeflow-userid identity header are delivered verbatim to a viewer pod whose image/podTemplateSpec the tenant chooses (POST /apps/tensorboard image= / podtemplatespec=, or a directly created Viewer CR), and viewer Set-Cookie headers are relayed under the UI origin; any co-contributor or admin who opens the viewer leaks a replayable session to the tenant - fork PR open, upstream via private channel (SECURITY.md)",
