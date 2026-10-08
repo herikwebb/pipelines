@@ -5,6 +5,7 @@ import (
 
 	"github.com/golang/glog"
 	api "github.com/kubeflow/pipelines/backend/api/v2beta1/go_client"
+	"github.com/kubeflow/pipelines/backend/src/apiserver/common"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/filter"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/list"
 	"github.com/kubeflow/pipelines/backend/src/apiserver/model"
@@ -48,6 +49,57 @@ func TestListK8sPipelines(t *testing.T) {
 	_, size, _, err = store.ListPipelines(fc, options)
 	require.Nil(t, err, "Failed to list all pipelines: %v", err)
 	require.Equalf(t, size, 2, "List size should not be zero")
+}
+
+func TestListK8sPipelines_MultiUser_OmittedNamespaceListsNothing(t *testing.T) {
+	podNamespace := viper.Get("POD_NAMESPACE")
+	viper.Set("POD_NAMESPACE", "Test")
+	defer viper.Set("POD_NAMESPACE", podNamespace)
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	store := NewPipelineStoreKubernetes(getClient())
+	_, err := store.CreatePipeline(&model.Pipeline{Name: "tenant-pipeline", Namespace: "tenant-a"})
+	require.NoError(t, err)
+
+	// A caller who omits the namespace is authorized through the shared-read
+	// path without any SubjectAccessReview, so the store must not widen an
+	// empty namespace into a cluster-wide list.
+	sharedFilter := &model.FilterContext{
+		ReferenceKey: &model.ReferenceKey{Type: model.NamespaceResourceType, ID: ""},
+	}
+	pipelines, size, npt, err := store.ListPipelines(sharedFilter, list.EmptyOptions())
+	require.NoError(t, err)
+	assert.Empty(t, pipelines)
+	assert.Equal(t, 0, size)
+	assert.Empty(t, npt)
+
+	tenantFilter := &model.FilterContext{
+		ReferenceKey: &model.ReferenceKey{Type: model.NamespaceResourceType, ID: "tenant-a"},
+	}
+	pipelines, size, _, err = store.ListPipelines(tenantFilter, list.EmptyOptions())
+	require.NoError(t, err)
+	require.Equal(t, 1, size)
+	assert.Equal(t, "tenant-pipeline", pipelines[0].Name)
+	assert.Equal(t, "tenant-a", pipelines[0].Namespace)
+}
+
+func TestListK8sPipelines_SingleUser_OmittedNamespaceListsAll(t *testing.T) {
+	podNamespace := viper.Get("POD_NAMESPACE")
+	viper.Set("POD_NAMESPACE", "Test")
+	defer viper.Set("POD_NAMESPACE", podNamespace)
+	viper.Set(common.MultiUserMode, "false")
+
+	store := NewPipelineStoreKubernetes(getClient())
+
+	// Single-user mode always passes an empty namespace and expects every
+	// pipeline in the cluster.
+	filter := &model.FilterContext{
+		ReferenceKey: &model.ReferenceKey{Type: model.NamespaceResourceType, ID: ""},
+	}
+	_, size, _, err := store.ListPipelines(filter, list.EmptyOptions())
+	require.NoError(t, err)
+	assert.Equal(t, 1, size)
 }
 
 func TestListK8sPipelines_WithFilter(t *testing.T) {

@@ -154,3 +154,44 @@ func TestGetPipelineByName_MultiUser_UnauthorizedNamespaceIsDenied(t *testing.T)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, err.(*util.UserError).ExternalStatusCode())
 }
+
+// Listing without a namespace is authorized as the shared-read path with no
+// SubjectAccessReview, so the Kubernetes store must not answer it with every
+// tenant's pipelines.
+func TestListPipelines_MultiUser_OmittedNamespaceReturnsNoTenantPipelines(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+	viper.Set(common.RequireNamespaceForPipelines, "false")
+	defer viper.Set(common.RequireNamespaceForPipelines, "false")
+	viper.Set("POD_NAMESPACE", installationNamespace)
+	defer viper.Set("POD_NAMESPACE", "")
+
+	pipelineServer, cleanup := multiUserPipelineServer(t, false)
+	defer cleanup()
+
+	response, err := pipelineServer.ListPipelines(userContext(),
+		&apiv2beta1.ListPipelinesRequest{Namespace: ""})
+
+	require.NoError(t, err)
+	assert.Empty(t, response.GetPipelines(), "an omitted namespace must not list other tenants' pipelines")
+	assert.Equal(t, int32(0), response.GetTotalSize())
+}
+
+func TestListPipelines_MultiUser_AuthorizedNamespaceSucceeds(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+	viper.Set(common.RequireNamespaceForPipelines, "false")
+	defer viper.Set(common.RequireNamespaceForPipelines, "false")
+	viper.Set("POD_NAMESPACE", installationNamespace)
+	defer viper.Set("POD_NAMESPACE", "")
+
+	pipelineServer, cleanup := multiUserPipelineServer(t, true)
+	defer cleanup()
+
+	response, err := pipelineServer.ListPipelines(userContext(),
+		&apiv2beta1.ListPipelinesRequest{Namespace: "tenant-a"})
+
+	require.NoError(t, err)
+	require.Len(t, response.GetPipelines(), 1)
+	assert.Equal(t, "tenant-a", response.GetPipelines()[0].GetNamespace())
+}
