@@ -103,7 +103,7 @@ class PipelineTask:
 
     **Note:** ``PipelineTask`` should not be constructed by pipeline authors directly, but instead obtained via an instantiated component (see example).
 
-    Replaces ``ContainerOp`` from ``kfp`` v1. Holds operations available on a task object, such as
+    Holds operations available on a task object, such as
     ``.after()``, ``.set_memory_limit()``, ``.enable_caching()``, etc.
 
     Args:
@@ -124,7 +124,7 @@ class PipelineTask:
     """
     _register_task_handler = _register_task_handler
 
-    # Fallback behavior for compiling a component. This should be overriden by
+    # Fallback behavior for compiling a component. This should be overridden by
     # pipeline `register_task_and_generate_id` if compiling a pipeline (more
     # than one component).
 
@@ -136,7 +136,7 @@ class PipelineTask:
         execution_caching_default: bool = True,
         execution_cache_key: Optional[str] = None,
     ) -> None:
-        """Initilizes a PipelineTask instance."""
+        """Initializes a PipelineTask instance."""
         # import within __init__ to avoid circular import
         from kfp.dsl.tasks_group import TasksGroup
         self.state = TaskState.FUTURE
@@ -518,7 +518,7 @@ class PipelineTask:
         type is also set via .add_accelerator_type().
 
         Args:
-            gpu: The maximum GPU reuqests allowed. This string should be a positive integer number of GPUs.
+            gpu: The maximum GPU requests allowed. This string should be a positive integer number of GPUs.
 
         Returns:
             Self return to allow chained setting calls.
@@ -914,17 +914,14 @@ class PipelineTask:
         return self
 
 
-# TODO: this function should ideally be in the function kfp.dsl.structures.check_placeholder_references_valid_io_name, which does something similar, but this causes the exception to be raised at component definition time, rather than compile time. This would break tests that load v1 component YAML, even though that YAML is invalid.
 def check_primitive_placeholder_is_used_for_correct_io_type(
     inputs_dict: Dict[str, structures.InputSpec],
     outputs_dict: Dict[str, structures.OutputSpec],
     arg: Union[placeholders.CommandLineElement, Any],
 ):
     """Validates input/output placeholders refer to an input/output with an
-    appropriate type for the placeholder. This should only apply to components
-    loaded from v1 component YAML, where the YAML is authored directly. For v2
-    YAML, this is encapsulated in the DSL logic which does not permit writing
-    incorrect placeholders.
+    appropriate type for the placeholder. Validates structured placeholders in
+    container components before their conversion to IR strings.
 
     Args:
         inputs_dict: The existing input names.
