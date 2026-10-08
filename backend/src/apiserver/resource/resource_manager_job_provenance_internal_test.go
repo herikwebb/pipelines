@@ -15,6 +15,7 @@
 package resource
 
 import (
+	"context"
 	"testing"
 
 	workflowapi "github.com/argoproj/argo-workflows/v4/pkg/apis/workflow/v1alpha1"
@@ -40,7 +41,7 @@ func TestChangeJobMode_UsesSelectedPipelineProvenance(t *testing.T) {
 		{name: "deleted V2 pin", v2: true, pinned: true, deletedVersion: true},
 		{name: "missing pinned V2 source", v2: true, pinned: true, missingSource: true},
 		{name: "missing V2 pin with retained reference", v2: true, pinned: true, missingPin: true},
-		{name: "literal V1 job after pin deletion", pinned: true, bothFields: true, deletedVersion: true, literal: true, wantAllowed: true},
+		{name: "literal workflow after legacy source deletion", pinned: true, bothFields: true, deletedVersion: true, literal: true, wantAllowed: true},
 		{name: "raw V1 pipeline field is not compiler provenance", pipelineOnly: true},
 		{name: "invalid pipeline field is not compiler provenance", pipelineOnly: true, invalidSource: true},
 	} {
@@ -62,7 +63,7 @@ func TestChangeJobMode_UsesSelectedPipelineProvenance(t *testing.T) {
 				manifest = v2SpecHelloWorld
 			}
 			pipelineSpec := model.PipelineSpec{
-				PipelineSpecManifest: model.LargeText(manifest),
+				PipelineSpecManifest: model.LargeText(v2SpecHelloWorld),
 				Parameters:           `[{"name":"param1","value":"world"}]`,
 				RuntimeConfig:        model.RuntimeConfig{Parameters: `{"text":"world"}`},
 			}
@@ -70,7 +71,7 @@ func TestChangeJobMode_UsesSelectedPipelineProvenance(t *testing.T) {
 				pipeline, err := manager.CreatePipeline(createPipeline("job-source", "", experiment.Namespace))
 				require.NoError(t, err)
 				version, err := manager.CreatePipelineVersion(createPipelineVersion(
-					pipeline.UUID, "selected-version", "", "", manifest, "", experiment.Namespace))
+					pipeline.UUID, "selected-version", "", "", v2SpecHelloWorld, "", experiment.Namespace))
 				require.NoError(t, err)
 				pipelineSpec.PipelineVersionId = version.UUID
 			}
@@ -78,7 +79,12 @@ func TestChangeJobMode_UsesSelectedPipelineProvenance(t *testing.T) {
 				DisplayName: "source-job", Enabled: true, ExperimentId: experiment.UUID, PipelineSpec: pipelineSpec,
 			})
 			require.NoError(t, err)
+			seedHistoricalEmbeddedSchedule(t, manager, job)
 			require.NoError(t, manager.ChangeJobMode(ctx, job.UUID, false))
+			if !test.v2 && test.pinned {
+				_, err = store.db.Exec(`UPDATE "pipeline_versions" SET "PipelineSpec" = ? WHERE "UUID" = ?`, manifest, job.PipelineVersionId)
+				require.NoError(t, err)
+			}
 			if test.bothFields {
 				// Historical rows could retain both the selected and unused source fields.
 				_, err = store.db.Exec(`UPDATE "jobs" SET "PipelineSpecManifest" = ?, "WorkflowSpecManifest" = ? WHERE "UUID" = ?`, v2SpecHelloWorld, manifest, job.UUID)
@@ -118,7 +124,15 @@ func TestChangeJobMode_UsesSelectedPipelineProvenance(t *testing.T) {
 			beforeSchedule = beforeSchedule.DeepCopy()
 			executionSpec, err := util.ScheduleSpecToExecutionSpec(util.ArgoWorkflow, beforeSchedule.Spec.Workflow)
 			require.NoError(t, err)
-			if !test.literal {
+			if test.literal {
+				workflow := executionSpec.(*util.Workflow)
+				for i := range workflow.Spec.Templates {
+					workflow.Spec.Templates[i].PodSpecPatch = ""
+				}
+				beforeSchedule.Spec.Workflow.Spec = workflow.ToStringForStore()
+				_, err = store.SwfClient().ScheduledWorkflow(job.Namespace).Update(ctx, beforeSchedule)
+				require.NoError(t, err)
+			} else {
 				require.Contains(t, executionSpec.ToStringForStore(), "{{inputs.parameters.pod-spec-patch}}")
 			}
 			patchCounter := &patchCountingSwfClient{SwfClientInterface: manager.swfClient}
@@ -131,8 +145,10 @@ func TestChangeJobMode_UsesSelectedPipelineProvenance(t *testing.T) {
 				require.NoError(t, err)
 			case test.invalidSource:
 				require.Error(t, err)
-			default:
+			case test.v2:
 				require.ErrorContains(t, err, "podSpecPatch")
+			default:
+				require.ErrorContains(t, err, "legacy Argo Workflow pipelines are no longer supported")
 			}
 			after, err := manager.GetJob(job.UUID)
 			require.NoError(t, err)
@@ -149,4 +165,20 @@ func TestChangeJobMode_UsesSelectedPipelineProvenance(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Historical schedules can retain compiled workflows even though new multi-user
+// schedules are generic. Seed that representation explicitly for migration checks.
+func seedHistoricalEmbeddedSchedule(t *testing.T, manager *ResourceManager, job *model.Job) {
+	t.Helper()
+	tmpl, _, err := manager.fetchTemplateFromPipelineSpec(&job.PipelineSpec)
+	require.NoError(t, err)
+	rendered, err := tmpl.ScheduledWorkflow(job)
+	require.NoError(t, err)
+	client := manager.swfClient.ScheduledWorkflow(job.Namespace)
+	schedule, err := client.Get(context.Background(), job.K8SName, metav1.GetOptions{})
+	require.NoError(t, err)
+	schedule.Spec.Workflow = rendered.Spec.Workflow
+	_, err = client.Update(context.Background(), schedule)
+	require.NoError(t, err)
 }

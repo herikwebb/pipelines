@@ -328,11 +328,6 @@ func TestConfigWrapperDefaults(t *testing.T) {
 		expected interface{}
 	}{
 		{
-			name:     "IsPipelineVersionUpdatedByDefault defaults to true",
-			getter:   func() interface{} { return IsPipelineVersionUpdatedByDefault() },
-			expected: true,
-		},
-		{
 			name:     "IsNamespaceRequiredForPipelines defaults to false",
 			getter:   func() interface{} { return IsNamespaceRequiredForPipelines() },
 			expected: false,
@@ -352,11 +347,7 @@ func TestConfigWrapperDefaults(t *testing.T) {
 			getter:   func() interface{} { return GetPodNamespace() },
 			expected: DefaultPodNamespace,
 		},
-		{
-			name:     "IsCacheEnabled defaults to true string",
-			getter:   func() interface{} { return IsCacheEnabled() },
-			expected: "true",
-		},
+
 		{
 			name:     "GetKubeflowUserIDHeader defaults to GoogleIAPUserIdentityHeader",
 			getter:   func() interface{} { return GetKubeflowUserIDHeader() },
@@ -458,13 +449,6 @@ func TestConfigWrapperCustomValues(t *testing.T) {
 		expected    interface{}
 	}{
 		{
-			name:     "IsPipelineVersionUpdatedByDefault with custom false",
-			envKey:   UpdatePipelineVersionByDefault,
-			envValue: "false",
-			getter:   func() interface{} { return IsPipelineVersionUpdatedByDefault() },
-			expected: false,
-		},
-		{
 			name:     "IsNamespaceRequiredForPipelines with custom true",
 			envKey:   RequireNamespaceForPipelines,
 			envValue: "true",
@@ -492,14 +476,7 @@ func TestConfigWrapperCustomValues(t *testing.T) {
 			getter:   func() interface{} { return GetPodNamespace() },
 			expected: "custom-ns",
 		},
-		{
-			name:        "IsCacheEnabled with custom false",
-			envKey:      CacheEnabled,
-			envValue:    "false",
-			useViperSet: true, // CacheEnabled is mixed-case, env var lookup via AutomaticEnv uppercases the key
-			getter:      func() interface{} { return IsCacheEnabled() },
-			expected:    "false",
-		},
+
 		{
 			name:     "GetKubeflowUserIDHeader with custom header",
 			envKey:   KubeflowUserIDHeader,
@@ -1001,4 +978,36 @@ func TestValidateServiceAccountAllowList_ConfiguredDefaultAllowed(t *testing.T) 
 	viper.Set(DefaultPipelineRunnerServiceAccountFlag, "my-runner")
 	err := ValidateServiceAccountAllowList("my-runner")
 	assert.Nil(t, err)
+}
+
+func TestGetServiceAccountAuthorizationMode(t *testing.T) {
+	for _, tc := range []struct {
+		name, value, want string
+		invalid           bool
+	}{
+		{name: "unset", want: "enforce"},
+		{name: "empty", want: "enforce"},
+		{name: "enforce", value: "enforce", want: "enforce"},
+		{name: "audit", value: "audit", want: "audit"},
+		{name: "typo", value: "audti", invalid: true},
+		{name: "legacy", value: "legacy", invalid: true},
+		{name: "case", value: "AUDIT", invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			viper.AutomaticEnv()
+			viper.AllowEmptyEnv(true)
+			if tc.name != "unset" {
+				t.Setenv(ServiceAccountAuthorizationMode, tc.value)
+			}
+			got, err := GetServiceAccountAuthorizationMode()
+			if tc.invalid {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }

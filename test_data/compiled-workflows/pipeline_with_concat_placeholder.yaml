@@ -3,7 +3,7 @@ kind: Workflow
 metadata:
   annotations:
     workflows.argoproj.io/pod-name-format: v1
-  generateName: one-step-pipeline-with-concat-placeholder-
+  generateName: pipeline-with-concat-placeholder-
 spec:
   arguments: {}
   entrypoint: entrypoint
@@ -23,7 +23,7 @@ spec:
       - --type
       - CONTAINER
       - --pipeline_name
-      - one-step-pipeline-with-concat-placeholder
+      - pipeline-with-concat-placeholder
       - --run_id
       - '{{workflow.uid}}'
       - --run_name
@@ -96,6 +96,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
       - mountPath: /var/run/secrets/kfp
         name: kfp-launcher-token
@@ -198,6 +199,7 @@ spec:
           - ALL
         seccompProfile:
           type: RuntimeDefault
+      terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
       - mountPath: /kfp-launcher
         name: kfp-launcher
@@ -241,6 +243,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
       - mountPath: /kfp-launcher
         name: kfp-launcher
@@ -316,7 +319,7 @@ spec:
       - --type
       - '{{inputs.parameters.driver-type}}'
       - --pipeline_name
-      - one-step-pipeline-with-concat-placeholder
+      - pipeline-with-concat-placeholder
       - --run_id
       - '{{workflow.uid}}'
       - --run_name
@@ -389,6 +392,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
       - mountPath: /var/run/secrets/kfp
         name: kfp-launcher-token

@@ -3,7 +3,7 @@ kind: Workflow
 metadata:
   annotations:
     workflows.argoproj.io/pod-name-format: v1
-  generateName: pipeline-with-various-types-
+  generateName: pipeline-with-various-io-types-
 spec:
   arguments: {}
   entrypoint: entrypoint
@@ -23,7 +23,7 @@ spec:
       - --type
       - CONTAINER
       - --pipeline_name
-      - pipeline-with-various-types
+      - pipeline-with-various-io-types
       - --run_id
       - '{{workflow.uid}}'
       - --run_name
@@ -96,6 +96,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
       - mountPath: /var/run/secrets/kfp
         name: kfp-launcher-token
@@ -198,6 +199,7 @@ spec:
           - ALL
         seccompProfile:
           type: RuntimeDefault
+      terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
       - mountPath: /kfp-launcher
         name: kfp-launcher
@@ -241,6 +243,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
       - mountPath: /kfp-launcher
         name: kfp-launcher
@@ -335,7 +338,7 @@ spec:
       - --type
       - '{{inputs.parameters.driver-type}}'
       - --pipeline_name
-      - pipeline-with-various-types
+      - pipeline-with-various-io-types
       - --run_id
       - '{{workflow.uid}}'
       - --run_name
@@ -408,6 +411,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
       - mountPath: /var/run/secrets/kfp
         name: kfp-launcher-token
@@ -468,7 +472,7 @@ spec:
       - arguments:
           parameters:
           - name: runtime-config
-            value: '{"parameterValues":{"input4":""}}'
+            value: '{"parameterValues":{"input1":"Hello","input4":"World"}}'
           - name: driver-type
             value: ROOT_DAG
         name: root-driver
