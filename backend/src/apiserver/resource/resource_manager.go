@@ -3612,7 +3612,7 @@ func (r *ResourceManager) AuthenticateRequest(ctx context.Context) (string, erro
 	return userIdentity, nil
 }
 
-// Verifies whether the user identity, which is contained in the context object,
+// IsAuthorized verifies whether the user identity, which is contained in the context object,
 // can perform some action (verb) on a resource (resourceType/resourceName) living in the
 // target namespace. If the returned error is nil, the authorization passes. Otherwise,
 // authorization fails with a non-nil error.
