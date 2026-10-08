@@ -96,6 +96,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
       - mountPath: /var/run/secrets/kfp
         name: kfp-launcher-token
@@ -184,6 +185,8 @@ spec:
     metadata: {}
     name: retry-system-container-executor
     outputs: {}
+    retryStrategy:
+      limit: 0
   - container:
       command:
       - should-be-overridden-during-runtime
@@ -216,6 +219,7 @@ spec:
           - ALL
         seccompProfile:
           type: RuntimeDefault
+      terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
       - mountPath: /kfp-launcher
         name: kfp-launcher
@@ -259,6 +263,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
       - mountPath: /kfp-launcher
         name: kfp-launcher
@@ -347,6 +352,8 @@ spec:
     metadata: {}
     name: root
     outputs: {}
+    retryStrategy:
+      limit: 0
   - container:
       args:
       - --type
@@ -425,6 +432,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
       - mountPath: /var/run/secrets/kfp
         name: kfp-launcher-token
@@ -503,6 +511,8 @@ spec:
     metadata: {}
     name: entrypoint
     outputs: {}
+    retryStrategy:
+      limit: 0
 status:
   finishedAt: null
   startedAt: null
