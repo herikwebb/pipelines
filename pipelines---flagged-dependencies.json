@@ -258,5 +258,18 @@
         "affected_version": "2.7.0",
         "fixed_version": "2.8.0",
         "severity": "high"
+    },
+    {
+        "title": "stream-json 1.9.1 in frontend/server vulnerable to GHSA-mjw6-4jj6-33hc (Assembler prototype pollution, npm, medium) and GHSA-hqr4-qq8f-hg3x (JSONC comment re-scan DoS, npm, medium) - no upgrade path: fixed in 3.6.0 but minio@8.0.7 (latest) pins stream-json ^1.8.0",
+        "status": "no_fix_available",
+        "commit_hash": "6c4512956b0573f731227cf931ca7c60ae656d7c",
+        "detected_at_pst": "2026-10-09T06:30:00-07:00",
+        "reported_link": "",
+        "cve_id": "",
+        "ghsa_id": "GHSA-mjw6-4jj6-33hc",
+        "package": "npm:stream-json",
+        "affected_version": "1.9.1",
+        "fixed_version": "3.6.0",
+        "severity": "medium"
     }
 ]
