@@ -1930,14 +1930,52 @@ const QUERIES = {
   NAMESPACE: 'namespace',
 };
 
+/**
+ * Request headers that carry the caller's session or identity. The namespaced
+ * artifact service runs in the tenant namespace, so anything forwarded to it is
+ * readable by that tenant. The configured identity header is added at runtime.
+ */
+const FORWARDED_CREDENTIAL_HEADERS = [
+  'cookie',
+  'authorization',
+  'proxy-authorization',
+  'x-forwarded-access-token',
+  'x-forwarded-email',
+  'x-forwarded-groups',
+  'x-forwarded-preferred-username',
+  'x-forwarded-user',
+  'x-auth-request-access-token',
+  'x-auth-request-email',
+  'x-auth-request-groups',
+  'x-auth-request-user',
+];
+
+/**
+ * Removes the caller's session and identity headers before a request is
+ * forwarded to the namespaced artifact service. The UI server has already
+ * authorized the request; the artifact service only needs the coordinates.
+ */
+export function stripForwardedCredentialHeaders(
+  proxyReq: { removeHeader(name: string): void },
+  identityHeaders: string[] = [],
+): void {
+  for (const headerName of [...FORWARDED_CREDENTIAL_HEADERS, ...identityHeaders]) {
+    if (headerName) {
+      proxyReq.removeHeader(headerName);
+    }
+  }
+}
+
 export function getArtifactsProxyHandler({
   enabled,
   allowedDomain,
   namespacedServiceGetter,
+  identityHeaders = [],
 }: {
   enabled: boolean;
   allowedDomain: string;
   namespacedServiceGetter: NamespacedServiceGetter;
+  identityHeaders?: string[];
 }): Handler {
   if (!enabled) {
     return (_req, _res, next) => next();
@@ -1950,6 +1988,7 @@ export function getArtifactsProxyHandler({
     changeOrigin: true,
     on: {
       proxyReq: (proxyReq) => {
+        stripForwardedCredentialHeaders(proxyReq, identityHeaders);
         console.log('Proxied artifact request: ', proxyReq.path);
       },
       // http-proxy-middleware copies upstream headers after this outer handler
