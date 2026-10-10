@@ -33,6 +33,7 @@ import (
 	"github.com/kubeflow/pipelines/backend/src/common/util"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -647,6 +648,88 @@ func TestCanAccessPipeline_SharedPipeline_ReadAllowed_EvenWhenUnauthorized(t *te
 	// LIST on shared pipeline should still be allowed even for unauthorized user
 	err = pipelineServer.canAccessPipeline(ctx, "", &authorizationv1.ResourceAttributes{Verb: common.RbacResourceVerbList})
 	assert.Nil(t, err)
+}
+
+func TestCanAccessPipeline_SharedPipeline_ReadRequiresIdentity(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	initEnvVars()
+	clientManager := resource.NewFakeClientManagerOrFatal(util.NewFakeTimeForEpoch())
+	resourceManager := resource.NewResourceManager(clientManager, &resource.ResourceManagerOptions{CollectMetrics: false})
+	defer clientManager.Close()
+
+	// Create a shared pipeline (empty namespace)
+	pipeline, err := resourceManager.CreatePipeline(&model.Pipeline{
+		Name:      "shared-pipeline",
+		Namespace: "",
+	})
+	assert.Nil(t, err)
+
+	pipelineServer := createPipelineServer(resourceManager, nil)
+
+	// A request that carries no user identity must not read shared pipelines.
+	ctx := context.Background()
+
+	err = pipelineServer.canAccessPipeline(ctx, pipeline.UUID, &authorizationv1.ResourceAttributes{Verb: common.RbacResourceVerbGet})
+	assert.NotNil(t, err)
+	assert.Equal(t, codes.Unauthenticated, err.(*util.UserError).ExternalStatusCode())
+	assert.Contains(t, err.Error(), "User identity is empty")
+
+	err = pipelineServer.canAccessPipeline(ctx, "", &authorizationv1.ResourceAttributes{Verb: common.RbacResourceVerbList})
+	assert.NotNil(t, err)
+	assert.Equal(t, codes.Unauthenticated, err.(*util.UserError).ExternalStatusCode())
+
+	err = pipelineServer.canAccessPipelineVersion(ctx, "", &authorizationv1.ResourceAttributes{Verb: common.RbacResourceVerbList})
+	assert.NotNil(t, err)
+	assert.Equal(t, codes.Unauthenticated, err.(*util.UserError).ExternalStatusCode())
+
+	// Shared read mode deliberately allows anonymous reads of every resource.
+	viper.Set(common.MultiUserModeSharedReadAccess, "true")
+	defer viper.Set(common.MultiUserModeSharedReadAccess, "false")
+
+	err = pipelineServer.canAccessPipeline(ctx, pipeline.UUID, &authorizationv1.ResourceAttributes{Verb: common.RbacResourceVerbGet})
+	assert.Nil(t, err)
+}
+
+func TestListPipelines_MultiUser_SharedPipelinesRequireIdentity(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	defer viper.Set(common.MultiUserMode, "false")
+
+	initEnvVars()
+	clientManager := resource.NewFakeClientManagerOrFatal(util.NewFakeTimeForEpoch())
+	resourceManager := resource.NewResourceManager(clientManager, &resource.ResourceManagerOptions{CollectMetrics: false})
+	defer clientManager.Close()
+
+	pipeline, err := resourceManager.CreatePipeline(&model.Pipeline{
+		Name:      "shared-pipeline",
+		Namespace: "",
+	})
+	assert.Nil(t, err)
+
+	pipelineServer := createPipelineServer(resourceManager, nil)
+
+	// Without an identity the shared pipeline list and the pipeline itself are hidden.
+	_, err = pipelineServer.ListPipelines(context.Background(), &apiv2.ListPipelinesRequest{})
+	assert.NotNil(t, err)
+	assert.Equal(t, codes.Unauthenticated, err.(*util.UserError).ExternalStatusCode())
+
+	_, err = pipelineServer.GetPipeline(context.Background(), &apiv2.GetPipelineRequest{PipelineId: pipeline.UUID})
+	assert.NotNil(t, err)
+	assert.Equal(t, codes.Unauthenticated, err.(*util.UserError).ExternalStatusCode())
+
+	_, err = pipelineServer.ListPipelineVersions(context.Background(), &apiv2.ListPipelineVersionsRequest{PipelineId: pipeline.UUID})
+	assert.NotNil(t, err)
+	assert.Equal(t, codes.Unauthenticated, err.(*util.UserError).ExternalStatusCode())
+
+	// An authenticated user, authorized or not, still reads shared pipelines.
+	md := metadata.New(map[string]string{common.GoogleIAPUserIdentityHeader: common.GoogleIAPUserIdentityPrefix + "user@google.com"})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	response, err := pipelineServer.ListPipelines(ctx, &apiv2.ListPipelinesRequest{})
+	assert.Nil(t, err)
+	assert.Len(t, response.Pipelines, 1)
+	assert.Equal(t, pipeline.UUID, response.Pipelines[0].PipelineId)
 }
 
 type errorRoundTripper struct {

@@ -913,6 +913,15 @@ func authorizePipelineAccessAndGet(ctx context.Context, resourceManager *resourc
 	// against the KFP system namespace, since shared pipelines have no namespace of their own.
 	if resourceManager.IsEmptyNamespace(resourceAttributes.Namespace) {
 		if resourceAttributes.Verb == common.RbacResourceVerbGet || resourceAttributes.Verb == common.RbacResourceVerbList {
+			// Shared pipelines are readable by every user without a SubjectAccessReview,
+			// but the caller must still be authenticated: an identity-less request must
+			// not read shared pipelines and their specs. Shared read mode already allows
+			// anonymous reads of every resource by configuration.
+			if !common.IsMultiUserSharedReadMode() {
+				if _, err := resourceManager.AuthenticateRequest(ctx); err != nil {
+					return nil, util.Wrapf(err, "Failed to access shared pipeline %s. Check if the request carries a user identity", pipelineID)
+				}
+			}
 			return pipeline, nil
 		}
 		resourceAttributes.Namespace = common.GetPodNamespace()

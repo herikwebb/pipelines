@@ -3747,7 +3747,40 @@ func (r *ResourceManager) GetPipelineVersionTemplate(pipelineVersionId string) (
 	}
 }
 
-// Verifies whether the user identity, which is contained in the context object,
+// AuthenticateRequest resolves the caller identity carried by the request
+// context through the configured authenticators. It performs no authorization
+// decision: callers that skip the SubjectAccessReview for a resource that every
+// user may read must still call this so that identity-less requests are
+// rejected. In single-user mode every request is trusted and an empty identity
+// is returned.
+func (r *ResourceManager) AuthenticateRequest(ctx context.Context) (string, error) {
+	if !common.IsMultiUserMode() {
+		return "", nil
+	}
+	glog.Info("Getting user identity")
+	if ctx == nil {
+		return "", util.NewUnauthenticatedError(errors.New("Context is nil"), "Authentication request failed")
+	}
+	// If the request header contains the user identity, requests are authorized
+	// based on the namespace field in the request.
+	errlist := make([]error, 0)
+	userIdentity := ""
+	for _, auth := range r.authenticators {
+		identity, err := auth.GetUserIdentity(ctx)
+		if err == nil {
+			userIdentity = identity
+
+			break
+		}
+		errlist = append(errlist, err)
+	}
+	if userIdentity == "" {
+		return "", util.NewUnauthenticatedError(utilerrors.NewAggregate(errlist), "Failed to check authorization. User identity is empty in the request header")
+	}
+	return userIdentity, nil
+}
+
+// IsAuthorized verifies whether the user identity, which is contained in the context object,
 // can perform some action (verb) on a resource (resourceType/resourceName) living in the
 // target namespace. If the returned error is nil, the authorization passes. Otherwise,
 // authorization fails with a non-nil error.
@@ -3768,25 +3801,9 @@ func (r *ResourceManager) isAuthorized(ctx context.Context, resourceAttributes *
 		return nil
 	}
 
-	glog.Info("Getting user identity")
-	if ctx == nil {
-		return util.NewUnauthenticatedError(errors.New("Context is nil"), "Authentication request failed")
-	}
-	// If the request header contains the user identity, requests are authorized
-	// based on the namespace field in the request.
-	errlist := make([]error, 0)
-	userIdentity := ""
-	for _, auth := range r.authenticators {
-		identity, err := auth.GetUserIdentity(ctx)
-		if err == nil {
-			userIdentity = identity
-
-			break
-		}
-		errlist = append(errlist, err)
-	}
-	if userIdentity == "" {
-		return util.NewUnauthenticatedError(utilerrors.NewAggregate(errlist), "Failed to check authorization. User identity is empty in the request header")
+	userIdentity, err := r.AuthenticateRequest(ctx)
+	if err != nil {
+		return err
 	}
 
 	glog.Infof("User: %s, ResourceAttributes: %+v", userIdentity, resourceAttributes)
