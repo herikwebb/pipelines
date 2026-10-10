@@ -36,6 +36,31 @@ IAM_SCOPE = 'https://www.googleapis.com/auth/iam'
 OAUTH_TOKEN_URI = 'https://www.googleapis.com/oauth2/v4/token'
 LOCAL_KFP_CREDENTIAL = os.path.expanduser('~/.config/kfp/credentials.json')
 
+# Files holding credentials (refresh tokens, client secrets, session cookies)
+# must not be readable by other local users.
+_PRIVATE_DIR_MODE = 0o700
+_PRIVATE_FILE_MODE = 0o600
+
+
+def write_private_json(path: str, data: Any) -> None:
+    """Writes data as JSON to path, readable and writable only by the owner.
+
+    The parent directory is created with owner-only permissions when it does
+    not exist. An existing file is truncated and its permissions tightened, so
+    a file created by an older SDK with default permissions is repaired on the
+    next write.
+
+    Args:
+        path: Path of the file to write.
+        data: JSON-serializable data to write.
+    """
+    os.makedirs(os.path.dirname(path), mode=_PRIVATE_DIR_MODE, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                 _PRIVATE_FILE_MODE)
+    with os.fdopen(fd, 'w') as f:
+        json.dump(data, f)
+    os.chmod(path, _PRIVATE_FILE_MODE)
+
 
 def get_gcp_access_token() -> Optional[str]:
     """Gets GCP access token for the current Application Default Credentials.
@@ -111,10 +136,7 @@ def get_auth_token(client_id: str, other_client_id: str,
             credentials[client_id]['access_token'] = refresh_token
         # TODO: handle the case when the refresh_token expires, which only
         # happens if the refresh_token is not used once for six months.
-        if not os.path.exists(os.path.dirname(LOCAL_KFP_CREDENTIAL)):
-            os.makedirs(os.path.dirname(LOCAL_KFP_CREDENTIAL))
-        with open(LOCAL_KFP_CREDENTIAL, 'w') as f:
-            json.dump(credentials, f)
+        write_private_json(LOCAL_KFP_CREDENTIAL, credentials)
         token = id_token_from_refresh_token(other_client_id,
                                             other_client_secret, refresh_token,
                                             client_id)
