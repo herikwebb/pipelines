@@ -199,6 +199,9 @@ func (r *ResourceManager) ImportTransfer(ctx context.Context, namespace string, 
 	if len(archive) > transfer.MaxArchiveBytes {
 		return empty, util.NewInvalidInputError("Archive exceeds 256 MiB")
 	}
+	if err := history.CheckDecodeCost(archive); err != nil {
+		return empty, err
+	}
 	var b history.NamespaceBundle
 	decoder := json.NewDecoder(bytes.NewReader(archive))
 	decoder.UseNumber()

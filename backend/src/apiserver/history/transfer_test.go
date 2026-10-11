@@ -128,6 +128,17 @@ func TestNamespaceTransferEmptyAndOwnership(t *testing.T) {
 	require.ErrorContains(t, ValidateNamespace(bad, "team", "team"), "another namespace")
 	require.Error(t, ValidateNamespace(b, "other", "other"))
 }
+func TestNamespaceTransferDecodeCost(t *testing.T) {
+	raw, err := json.Marshal(namespaceFixture(t, database(t)))
+	require.NoError(t, err)
+	require.NoError(t, CheckDecodeCost(raw))
+	// Each 3-byte "{}" would decode into a zeroed Entry; reject before allocating.
+	entries := MaxTransferDecodeCost/transferDecodeObjectCost + 1
+	amplified := append([]byte(`{"Entries":[{}`), bytes.Repeat([]byte(`,{}`), entries-1)...)
+	amplified = append(amplified, "]}"...)
+	require.ErrorContains(t, CheckDecodeCost(amplified), "decode limit")
+	require.ErrorContains(t, CheckDecodeCost([]byte(`{"Entries":[{]}`)), "Invalid transfer archive")
+}
 func TestNamespaceTransferSingleUserOwnership(t *testing.T) {
 	ctx := context.Background()
 	source, dest := database(t), database(t)
