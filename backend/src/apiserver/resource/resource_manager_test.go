@@ -3820,6 +3820,40 @@ func TestEnableJob_ReauthorizesEmbeddedWorkflowServiceAccounts(t *testing.T) {
 	assert.False(t, storedJob.Enabled)
 }
 
+func TestEnableJob_ReauthorizesGenericMultiUserScheduleServiceAccounts(t *testing.T) {
+	viper.Set(common.MultiUserMode, "true")
+	viper.Set(common.AllowedServiceAccountsFlag, "nested-sa")
+	t.Cleanup(func() {
+		viper.Set(common.MultiUserMode, "false")
+		viper.Set(common.AllowedServiceAccountsFlag, "")
+	})
+
+	store, manager, experiment := initWithExperiment(t)
+	defer store.Close()
+	job, err := manager.CreateJob(multiUserContext(), &model.Job{
+		DisplayName:  "j1",
+		Enabled:      false,
+		ExperimentId: experiment.UUID,
+		PipelineSpec: pipelineSpecWithTemplateServiceAccount(t, "nested-sa"),
+	})
+	require.NoError(t, err)
+	schedule, err := manager.swfClient.ScheduledWorkflow(job.Namespace).Get(context.Background(), job.K8SName, v1.GetOptions{})
+	require.NoError(t, err)
+	require.True(t, schedule.Spec.Workflow == nil || schedule.Spec.Workflow.Spec == nil, "multi-user schedules must not embed a workflow")
+
+	patchCounter := &patchCountingSwfClient{SwfClientInterface: manager.swfClient}
+	manager.swfClient = patchCounter
+	manager.subjectAccessReviewClient = client.NewFakeSubjectAccessReviewClientUnauthorized()
+
+	err = manager.ChangeJobMode(multiUserContext(), job.UUID, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Unauthorized")
+	assert.Zero(t, patchCounter.patchCalls, "the ScheduledWorkflow must not be enabled when authorization fails")
+	storedJob, getErr := manager.GetJob(job.UUID)
+	require.NoError(t, getErr)
+	assert.False(t, storedJob.Enabled)
+}
+
 func TestEnableJob_JobNotExist(t *testing.T) {
 	store := NewFakeClientManagerOrFatal(util.NewFakeTimeForEpoch())
 	defer store.Close()

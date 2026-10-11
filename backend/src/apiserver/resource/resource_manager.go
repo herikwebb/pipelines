@@ -2004,6 +2004,12 @@ func (r *ResourceManager) ChangeJobMode(ctx context.Context, jobId string, enabl
 			if err := r.authorizeExecutionServiceAccounts(ctx, executionSpec, allowCompilerPodSpecPatch, k8sNamespace, "enable_recurring_run"); err != nil {
 				return util.Wrapf(err, "Failed to enable recurring run %v due to service account authorization error", jobId)
 			}
+		} else if common.IsMultiUserMode() {
+			// Generic multi-user schedules submit each tick as the controller, so
+			// the enabling caller must be authorized for the job's identities here.
+			if err := r.authorizeGenericJobServiceAccounts(ctx, job, k8sNamespace); err != nil {
+				return util.Wrapf(err, "Failed to enable recurring run %v due to service account authorization error", jobId)
+			}
 		}
 	}
 
@@ -2022,6 +2028,28 @@ func (r *ResourceManager) ChangeJobMode(ctx context.Context, jobId string, enabl
 		return util.Wrapf(err, "Failed to change recurring run's %v mode to enable:%v", jobId, enable)
 	}
 	return nil
+}
+
+// Renders the workflow a generic schedule would submit and authorizes the
+// caller for its service accounts, as CreateJob does.
+func (r *ResourceManager) authorizeGenericJobServiceAccounts(ctx context.Context, job *model.Job, namespace string) error {
+	if err := r.authorizeServiceAccount(ctx, job.ServiceAccount, namespace); err != nil {
+		return err
+	}
+	pipelineSpec := job.PipelineSpec
+	tmpl, _, err := r.fetchTemplateFromPipelineSpec(&pipelineSpec)
+	if err != nil {
+		return util.Wrap(err, "Failed to render the recurring run workflow")
+	}
+	rendered, err := tmpl.ScheduledWorkflow(job)
+	if err != nil {
+		return util.Wrap(err, "Failed to render the recurring run workflow")
+	}
+	executionSpec, err := util.ScheduleSpecToExecutionSpec(util.ArgoWorkflow, rendered.Spec.Workflow)
+	if err != nil {
+		return util.Wrap(err, "Failed to inspect the recurring run's service accounts")
+	}
+	return r.authorizeExecutionServiceAccounts(ctx, executionSpec, tmpl.GetTemplateType() == template.V2, namespace, "enable_recurring_run")
 }
 
 // DeleteJob deletes a recurring run with given id.
