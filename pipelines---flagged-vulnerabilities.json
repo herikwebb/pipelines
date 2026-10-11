@@ -420,5 +420,12 @@
         "reported_link": "https://github.com/herikwebb/pipelines/pull/176",
         "primary_location": "frontend/server/handlers/artifacts.ts",
         "severity": "medium"
+    },
+    {
+        "title": "Memory-exhaustion DoS in the transfer import endpoint: ImportTransfer (backend/src/apiserver/resource/transfer.go) json.Decodes the whole <=256 MiB archive into typed history structs before ValidateNamespace enforces run/row/catalog counts, so an archive of tiny values (e.g. {\"Entries\":[{},{},...]}) amplifies ~570x (~150 GB heap) and OOM-kills ml-pipeline; reachable by any tenant with edit in their own namespace (unauthenticated in single-user mode) via POST /apis/v2beta1/transfer/import",
+        "status": "active",
+        "commit_hash": "1aeafa5b5f811c5400377f0e593cd6f1cb8accd6",
+        "detected_at_pst": "2026-10-11T06:35:00-07:00",
+        "reported_link": "https://github.com/herikwebb/pipelines/pull/178"
     }
 ]
