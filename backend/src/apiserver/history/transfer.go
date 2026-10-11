@@ -4,9 +4,12 @@
 package history
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"io"
 	"sort"
 	"unicode/utf8"
 
@@ -22,6 +25,17 @@ const TransferFormat = "kfp-namespace-transfer/v1"
 const MaxTransferRuns = 1000
 const MaxTransferObjects = 10000
 const MaxTransferRows = 20000
+
+// Decoding expands small JSON values into much larger Go values: "{}" becomes a
+// zeroed row struct of up to ~1 KiB, so MaxArchiveBytes alone does not bound
+// import memory. These weights over-approximate that expansion per token; string
+// contents are excluded because the archive byte limit already bounds them. The
+// cost limit leaves room for the record limits above with nested JSON columns.
+const (
+	transferDecodeObjectCost = 1 << 10
+	transferDecodeTokenCost  = 1 << 5
+	MaxTransferDecodeCost    = 2 * transfer.MaxArchiveBytes
+)
 
 // NamespaceBundle is a logical namespace archive. RuntimeNamespace is used only
 // for single-user installations whose experiment namespace is empty.
@@ -166,6 +180,34 @@ func ExportNamespace(ctx context.Context, db *gorm.DB, namespace, runtimeNamespa
 		}
 	}
 	return b, ValidateNamespace(b, namespace, runtimeNamespace)
+}
+
+// CheckDecodeCost streams the archive tokens and rejects one whose decoded form
+// could exceed MaxTransferDecodeCost, before a typed decode allocates it.
+func CheckDecodeCost(archive []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(archive))
+	decoder.UseNumber()
+	cost := 0
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return util.NewInvalidInputErrorWithDetails(err, "Invalid transfer archive")
+		}
+		switch token {
+		case json.Delim('}'), json.Delim(']'):
+			continue
+		case json.Delim('{'):
+			cost += transferDecodeObjectCost
+		default:
+			cost += transferDecodeTokenCost
+		}
+		if cost > MaxTransferDecodeCost {
+			return util.NewInvalidInputError("archive exceeds the import decode limit; export a smaller completed-history date range")
+		}
+	}
 }
 
 // ValidateNamespace checks the whole graph before any destination lookup/write.
