@@ -27,6 +27,7 @@ import {
   parseArtifactStoreEndpoint,
 } from './minio-helper.js';
 import { isTrustedArtifactEndpoint } from './handlers/domain-checker.js';
+import { validateArtifactKeyPrefix } from './helpers/artifact-validator.js';
 import { CORE_SCHEMA, load as jsYamlLoad, mergeTag } from 'js-yaml';
 
 export interface PartialArgoWorkflow {
@@ -381,6 +382,16 @@ export async function getPodLogsMinioRequestConfigfromWorkflow(
   // workflow-referenced Secret so custom object-store credentials are honored,
   // while still refusing to read Secrets from any user namespace.
   const serverNamespace = getServerNamespace();
+  // Security: the bucket and log key above are read from the Workflow status,
+  // which anyone allowed to write Workflows in the run namespace can author
+  // (the Workflow CRD has no status subresource). For a user-namespace run the
+  // object is fetched with the frontend's own shared object-store credentials,
+  // so an unchecked key would let one tenant read any object those credentials
+  // can reach. Only serve a log object that sits under the run namespace's own
+  // key prefix, applying the same ownership rule as the artifact route.
+  if (namespace && namespace !== serverNamespace) {
+    assertLogArtifactOwnedByNamespace(s3Artifact.bucket, logKey, namespace);
+  }
   let accessKey: string | undefined;
   let secretKey: string | undefined;
   if (namespace && namespace === serverNamespace) {
@@ -419,6 +430,42 @@ export async function getPodLogsMinioRequestConfigfromWorkflow(
     client,
     key: logKey,
   };
+}
+
+/**
+ * Throws unless the pod log object named by a Workflow status belongs to the
+ * given run namespace, i.e. its key sits under the namespace's key prefix
+ * (`<ARTIFACT_NAMESPACE_KEY_PREFIX>/<namespace>/...`, `private-artifacts` by
+ * default) with no traversal or empty segments. The bucket must be a plain
+ * bucket name so it cannot smuggle extra key segments into the check.
+ * @param bucket bucket named by the workflow status.
+ * @param key log object key named by the workflow status.
+ * @param namespace namespace of the run whose logs were requested.
+ */
+export function assertLogArtifactOwnedByNamespace(
+  bucket: unknown,
+  key: unknown,
+  namespace: string,
+): void {
+  if (typeof bucket !== 'string' || bucket === '' || bucket.includes('/')) {
+    throw new Error(
+      'Unable to retrieve logs from artifact store; invalid bucket in workflow status.',
+    );
+  }
+  // validateArtifactKeyPrefix treats '?' as the start of a provider query, so a
+  // key containing one would be validated only up to that point while the full
+  // key is what gets fetched. Log object keys never carry a query; reject them.
+  if (typeof key !== 'string' || key === '' || key.includes('?')) {
+    throw new Error(
+      'Unable to retrieve logs from artifact store; invalid log key in workflow status.',
+    );
+  }
+  const validation = validateArtifactKeyPrefix(`s3://${bucket}/${key}`, namespace);
+  if (!validation.valid) {
+    throw new Error(
+      `Unable to retrieve logs from artifact store; log key is not owned by namespace ${namespace}.`,
+    );
+  }
 }
 
 /**
