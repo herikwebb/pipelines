@@ -16,6 +16,7 @@
 import copy
 import dataclasses
 import datetime
+import html
 import json
 import logging
 import os
@@ -509,12 +510,7 @@ class Client:
                 experiment=experiment)
 
         link = f'{self._get_url_prefix()}/#/experiments/details/{experiment.experiment_id}'
-        if auth.is_ipython():
-            import IPython
-            html = f'<a href="{link}" target="_blank" >Experiment details</a>.'
-            IPython.display.display(IPython.display.HTML(html))
-        else:
-            print(f'Experiment details: {link}')
+        _display_details_link(link, 'Experiment details')
 
         return experiment
 
@@ -778,12 +774,7 @@ class Client:
         response = self._run_api.run_service_create_run(run=run_body)
 
         link = f'{self._get_url_prefix()}/#/runs/details/{response.run_id}'
-        if auth.is_ipython():
-            import IPython
-            html = (f'<a href="{link}" target="_blank" >Run details</a>.')
-            IPython.display.display(IPython.display.HTML(html))
-        else:
-            print(f'Run details: {link}')
+        _display_details_link(link, 'Run details')
 
         return response
 
@@ -1489,12 +1480,7 @@ class Client:
             description=description,
             namespace=namespace)
         link = f'{self._get_url_prefix()}/#/pipelines/details/{response.pipeline_id}'
-        if auth.is_ipython():
-            import IPython
-            html = f'<a href="{link}" target="_blank" >Pipeline details</a>.'
-            IPython.display.display(IPython.display.HTML(html))
-        else:
-            print(f'Pipeline details: {link}')
+        _display_details_link(link, 'Pipeline details')
 
         return response
 
@@ -1579,12 +1565,7 @@ class Client:
             pipeline_package_path, **kwargs)
 
         link = f'{self._get_url_prefix()}/#/pipelines/details/{response.pipeline_id}/version/{response.pipeline_version_id}'
-        if auth.is_ipython():
-            import IPython
-            html = f'<a href="{link}" target="_blank" >Pipeline details</a>.'
-            IPython.display.display(IPython.display.HTML(html))
-        else:
-            print(f'Pipeline details: {link}')
+        _display_details_link(link, 'Pipeline details')
 
         return response
 
@@ -1725,6 +1706,27 @@ class Client:
             pipeline_id=pipeline_id,
             pipeline_version_id=pipeline_version_id,
         )
+
+
+def _display_details_link(link: str, label: str) -> None:
+    """Shows a link to a resource in the KFP UI.
+
+    In a notebook the link is rendered as HTML. The resource ids that make up
+    the link come from the API server response, so the link is escaped before
+    it is placed in the anchor to keep server-provided values from being
+    interpreted as markup or script in the notebook.
+
+    Args:
+        link: URL of the resource in the KFP UI.
+        label: Text of the link.
+    """
+    if auth.is_ipython():
+        import IPython
+        anchor = (f'<a href="{html.escape(link, quote=True)}" target="_blank" >'
+                  f'{html.escape(label)}</a>.')
+        IPython.display.display(IPython.display.HTML(anchor))
+    else:
+        print(f'{label}: {link}')
 
 
 def _add_generated_apis(

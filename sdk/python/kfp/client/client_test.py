@@ -1030,5 +1030,46 @@ class TestCreateJobConfigPipelineVersionReference(parameterized.TestCase):
             )
 
 
+class TestDisplayDetailsLink(unittest.TestCase):
+
+    def _display_in_notebook(self, link: str, label: str) -> str:
+        display_module = MagicMock()
+        ipython_module = MagicMock(display=display_module)
+        with patch.dict('sys.modules', {
+                'IPython': ipython_module,
+                'IPython.display': display_module
+        }):
+            with patch.object(auth, 'is_ipython', return_value=True):
+                client._display_details_link(link, label)
+        display_module.HTML.assert_called_once()
+        return display_module.HTML.call_args[0][0]
+
+    def test_notebook_link_is_rendered_as_anchor(self):
+        rendered = self._display_in_notebook(
+            'http://host/pipeline/#/runs/details/run-id', 'Run details')
+        self.assertEqual(
+            rendered, '<a href="http://host/pipeline/#/runs/details/run-id" '
+            'target="_blank" >Run details</a>.')
+
+    def test_notebook_link_escapes_server_provided_ids(self):
+        run_id = '"><img src=x onerror="alert(1)"><a href="'
+        rendered = self._display_in_notebook(
+            f'http://host/pipeline/#/runs/details/{run_id}', 'Run details')
+        self.assertNotIn('<img', rendered)
+        self.assertNotIn(run_id, rendered)
+        self.assertIn(
+            '&quot;&gt;&lt;img src=x onerror=&quot;alert(1)&quot;&gt;',
+            rendered)
+        self.assertEqual(rendered.count('<a '), 1)
+
+    def test_link_is_printed_outside_notebooks(self):
+        with patch.object(auth, 'is_ipython', return_value=False):
+            with patch('builtins.print') as mock_print:
+                client._display_details_link(
+                    'http://host/pipeline/#/runs/details/run-id', 'Run details')
+        mock_print.assert_called_once_with(
+            'Run details: http://host/pipeline/#/runs/details/run-id')
+
+
 if __name__ == '__main__':
     unittest.main()
